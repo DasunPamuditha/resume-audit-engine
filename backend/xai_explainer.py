@@ -1,31 +1,70 @@
-# backend/xai_explainer.py
+from typing import List, Dict, Any
 
-def generate_xai_rationale(candidate_name: str, confidence_score: int, status: str, skill_gap_data: dict, forensic_flags: list) -> str:
-    """
-    Generates a natural-language Explainable AI (XAI) rationale incorporating 
-    structured severity counts from forensic code analysis.
-    """
-    matched = skill_gap_data.get("matched_skills", [])
-    unverified = skill_gap_data.get("unverified_claims", [])
-    match_pct = skill_gap_data.get("skill_match_percentage", 0.0)
-    
-    rationale_parts = []
-    
-    # Core Verdict Sentence
-    if status == "verified":
-        rationale_parts.append(f"Candidate {candidate_name} has been **VERIFIED** with a confidence score of {confidence_score}/100.")
-    else:
-        rationale_parts.append(f"Candidate {candidate_name} has been **FLAGGED** for review with a confidence score of {confidence_score}/100.")
-        
-    # Skill-Gap Integration
-    if matched:
-        rationale_parts.append(f"Technical artifacts successfully verified claimed proficiencies in: {', '.join(matched)} ({match_pct}% skill match rate).")
+class XAIExplainer:
+    def __init__(self, extracted_skills: List[str], audit_results: Dict):
+        self.extracted_skills = [s.lower() for s in extracted_skills]
+        self.audit_results = audit_results
+
+    def generate_explanation(self) -> Dict:
+        lang_distribution = self.audit_results.get("language_distribution", {})
+        anomalies = self.audit_results.get("anomalies", [])
+        dep_verified = self.audit_results.get("dependency_verified", False)
+
+        skill_breakdown = {}
+        recommendations = []
+        core_languages = ["python", "javascript", "java"]
+
+        for lang in core_languages:
+            score = lang_distribution.get(lang, 0.0)
+            if score > 0.15:
+                status = "Verified (Strong Telemetry)"
+            elif score > 0.0:
+                status = "Partial Evidence (Low Code Volume)"
+                recommendations.append(f"Contribute more frequent code commits utilizing {lang.capitalize()} to strengthen portfolio verification.")
+            else:
+                status = "Unclaimed / Unverified"
+                if lang in self.extracted_skills:
+                    recommendations.append(f"Skill inflation detected: '{lang.capitalize()}' is listed on resume but lacks repository byte-count or dependency support.")
+
+            skill_breakdown[lang] = {
+                "status": status,
+                "confidence_weight": round(score * 100, 2)
+            }
+
+        if not dep_verified:
+            recommendations.append("Add explicit dependency manifest files (e.g., requirements.txt, package.json, pom.xml) to validate library usage.")
+
+        if anomalies:
+            recommendations.append("Resolve temporal anomalies by maintaining consistent development cadences and avoiding bulk-dump commits.")
+
+        return {
+            "skill_verification_breakdown": skill_breakdown,
+            "upskilling_recommendations": recommendations,
+            "forensic_warning_flags": anomalies
+        }
+
+
+def generate_xai_rationale(*args, **kwargs) -> str:
+    candidate = kwargs.get("candidate_name", "The candidate")
+    score = kwargs.get("confidence_score", kwargs.get("score", "N/A"))
+    matched = kwargs.get("matched_skills", [])
+    unverified = kwargs.get("unverified_claims", kwargs.get("unverified_skills", []))
+    flags = kwargs.get("forensic_flags", [])
+
+    matched_str = ", ".join(matched) if matched else "none of the primary target languages"
+    unverified_str = ", ".join(unverified) if unverified else "none"
+    flag_count = len(flags) if isinstance(flags, list) else 0
+
+    rationale = f"Audit evaluation for {candidate} yielded an overall confidence score of {score}%. Cross-referencing the resume against public GitHub telemetry positively verified [{matched_str}]. "
+
     if unverified:
-        rationale_parts.append(f"Discrepancy detected: The resume claims expertise in [{', '.join(unverified)}], but insufficient code evidence was found.")
-        
-    # Structured Forensic Count Breakdown
-    critical_count = sum(1 for f in forensic_flags if isinstance(f, dict) and f.get("severity") == "CRITICAL")
-    warning_count = sum(1 for f in forensic_flags if isinstance(f, dict) and f.get("severity") == "WARNING")
-    
-    if critical_count > 0 or warning_count > 0:
-        rationale_parts.append(f"Static code analysis flagged {critical_count} critical issue(s) and {warning_count} warning(s) requiring technical evaluation."
+        rationale += f"However, potential resume inflation or missing artifact evidence was noted for [{unverified_str}], which lacked sufficient repository byte-count or manifest declarations. "
+    else:
+        rationale += "All declared core technical competencies were backed by repository evidence. "
+
+    if flag_count > 0:
+        rationale += f"Additionally, the forensic analyzer raised {flag_count} warning/anomaly flag(s) during codebase and temporal provenance inspection."
+    else:
+        rationale += "Zero critical forensic or temporal anomalies were detected across the evaluated commit history."
+
+    return rationale
