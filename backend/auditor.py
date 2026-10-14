@@ -32,20 +32,3 @@ def evaluated_candidate_module():
     return {
         "status": status,
         "confidence_score": confidence_score,
-        "resume_summary": f"Processed resume text ({len(resume_text)} characters analyzed).",
-        "repositories_evaluated": len(repos),
-        "repository_list": repos[:5], # Return top 5 repos for review
-        "ast_metrics": ast_metrics,
-        "forensic_flags": forensic_flags
-    }
-
-def audit_repository_code(source_code: str, claimed_skill: str) -> dict:
-    """
-    Performs forensic auditing on direct source code uploads using AST static analysis.
-    """
-    ast_metrics = analyze_python_code_structure(source_code)
-    return {
-        "status": "verified",
-        "ast_metrics": ast_metrics,
-        "forensic_flags": ast_metrics.get("forensic_flags", [])
-    }

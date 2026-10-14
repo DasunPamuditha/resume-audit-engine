@@ -28,8 +28,4 @@ def generate_xai_rationale(candidate_name: str, confidence_score: int, status: s
     warning_count = sum(1 for f in forensic_flags if isinstance(f, dict) and f.get("severity") == "WARNING")
     
     if critical_count > 0 or warning_count > 0:
-        rationale_parts.append(f"Static code analysis flagged {critical_count} critical issue(s) and {warning_count} warning(s) requiring technical evaluation.")
-    else:
-        rationale_parts.append("Static code analysis passed with zero security flags or anti-patterns detected.")
-        
-    return " ".join(rationale_parts)
+        rationale_parts.append(f"Static code analysis flagged {critical_count} critical issue(s) and {warning_count} warning(s) requiring technical evaluation."
