@@ -216,7 +216,7 @@ st.markdown("""
         display: inline-block;
     }
 
-    /* Plain-English Summary Block */
+    /* Executive Narrative Block */
     .narrative-block {
         background: #121215;
         border: 1px solid #27272A;
@@ -228,7 +228,7 @@ st.markdown("""
         line-height: 1.65;
     }
 
-    /* Skill Tags & Evidence Rows */
+    /* Skill Tags */
     .tag-verified {
         background: #18181B;
         color: #E4E4E7;
@@ -254,29 +254,6 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace;
         display: inline-block;
         margin: 4px 6px 4px 0;
-    }
-    .evidence-row {
-        background: #18181B;
-        border: 1px solid #27272A;
-        border-radius: 6px;
-        padding: 10px 14px;
-        margin-top: 8px;
-        font-size: 0.82rem;
-        color: #D4D4D8;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-    .evidence-link {
-        color: #818CF8 !important;
-        text-decoration: none;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.78rem;
-    }
-    .evidence-link:hover {
-        text-decoration: underline;
     }
 
     /* Repository Row Item */
@@ -366,32 +343,32 @@ def build_humanized_summary(username, score, matched_skills, unverified_skills, 
         return f"We could not find any technical skills on {username}'s resume or any public GitHub projects to check."
 
     parts = [
-        f"**{username}** got an overall skill match score of **{score}%** after checking **{repos_count}** public GitHub project(s)."
+        f"{username} achieved an overall skill match score of {score}% after evaluating {repos_count} public GitHub project(s)."
     ]
 
     if matched_skills:
-        skills_formatted = ", ".join([f"**{s.upper()}**" for s in matched_skills])
+        skills_formatted = ", ".join([f"{s.upper()}" for s in matched_skills])
         parts.append(
-            f"We compared their resume with their real GitHub code and found solid proof for: {skills_formatted}."
+            f"Cross-examining the uploaded resume against live repository telemetry confirmed hands-on evidence for {skills_formatted}."
         )
     else:
         parts.append(
-            "None of the technical skills written on the resume were found in their public GitHub projects."
+            "Zero skill matches were found between the candidate's self-declared resume claims and their public GitHub repositories."
         )
 
     if unverified_skills:
-        unverified_formatted = ", ".join([f"**{s.upper()}**" for s in unverified_skills])
+        unverified_formatted = ", ".join([f"{s.upper()}" for s in unverified_skills])
         parts.append(
-            f"We did not see public code for {unverified_formatted}. (Keep in mind: they may have used these skills in private company jobs or university coursework that isn't public on GitHub)."
+            f"Resume claims lacking corroborating public repository or manifest evidence include {unverified_formatted}. Note that these skills may have been utilized in private enterprise environments."
         )
 
     if crit_count > 0 or warn_count > 0:
         parts.append(
-            f"Our commit history check noticed **{crit_count} serious issue(s)** and **{warn_count} warning(s)**—such as unusual commit times, bulk file uploads, or missing setup files. See the details below."
+            f"The Git Provenance and Forensic Analyzer flagged {crit_count} critical anomaly(s) and {warn_count} warning(s) across commit timestamps, velocity cadences, and repository structures."
         )
     else:
         parts.append(
-            "Their GitHub commit history looks natural and steady, with no suspicious upload patterns or code warnings."
+            "No temporal provenance anomalies, timestamp manipulations, or code security warnings were found across the evaluated commit history."
         )
 
     return " ".join(parts)
@@ -433,7 +410,6 @@ def generate_pdf_report(data, summary_text, score):
         spaceAfter=6
     )
 
-    clean_summary = summary_text.replace("**", "")
     role_str = data.get("target_role") or "Software Developer"
     exec_time = data.get("execution_time_seconds", 0.0)
 
@@ -462,8 +438,8 @@ def generate_pdf_report(data, summary_text, score):
     story.append(t)
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("Plain-English Summary", heading_style))
-    story.append(Paragraph(clean_summary, body_style))
+    story.append(Paragraph("Executive Audit Summary", heading_style))
+    story.append(Paragraph(summary_text, body_style))
     story.append(Spacer(1, 8))
 
     story.append(Paragraph("Skills Found vs. Not Found", heading_style))
@@ -615,7 +591,6 @@ else:
     skill_data = data.get("skill_gap_analysis", {})
     matched_skills = skill_data.get("matched_skills", [])
     unverified_skills = skill_data.get("unverified_claims", [])
-    evidence_map = skill_data.get("skill_evidence_map", {})
     heuristic = data.get("heuristic_breakdown", {})
 
     raw_score = data.get("confidence_score", 0)
@@ -708,11 +683,11 @@ else:
             use_container_width=True
         )
 
-    # --- SECTION: PLAIN-ENGLISH SUMMARY ---
+    # --- SECTION: EXECUTIVE AUDIT SUMMARY ---
     st.markdown("""
         <div class="sec-header">
-            <p class="sec-title">Plain-English Summary</p>
-            <p class="sec-desc">A quick, easy-to-read summary of what we found</p>
+            <p class="sec-title">Executive Audit Summary</p>
+            <p class="sec-desc">High-level synthesis of candidate verification and repository forensics</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -722,11 +697,11 @@ else:
         </div>
     """, unsafe_allow_html=True)
 
-    # --- SECTION: SKILLS FOUND VS NOT FOUND (WITH DIRECT CLICKABLE EVIDENCE LINKS) ---
+    # --- SECTION: SKILLS FOUND VS NOT FOUND ---
     st.markdown("""
         <div class="sec-header">
             <p class="sec-title">Skills on Resume vs. Real GitHub Code</p>
-            <p class="sec-desc">Side-by-side comparison with direct links to the exact project, setup file, and commit</p>
+            <p class="sec-desc">Side-by-side comparison of verified and unverified technical claims</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -738,28 +713,6 @@ else:
             if matched_skills
             else '<span style="color: #71717A; font-size: 0.86rem;">No matching skills found on GitHub.</span>'
         )
-        evidence_rows_html = ""
-        for skill in matched_skills:
-            ev = evidence_map.get(skill, {})
-            r_name = ev.get("repo_name") or "Project"
-            r_url = ev.get("repo_url") or "#"
-            c_sha = ev.get("commit_sha")
-            c_url = ev.get("commit_url") or r_url
-            m_name = ev.get("manifest_name")
-            m_url = ev.get("manifest_url")
-
-            links_parts = [f'<a href="{r_url}" target="_blank" class="evidence-link">Project: {r_name} &nearr;</a>']
-            if m_name and m_url:
-                links_parts.append(f'<a href="{m_url}" target="_blank" class="evidence-link">Setup File: {m_name.split("/")[-1]} &nearr;</a>')
-            if c_sha:
-                links_parts.append(f'<a href="{c_url}" target="_blank" class="evidence-link">Commit: {c_sha} &nearr;</a>')
-
-            evidence_rows_html += f"""
-                <div class="evidence-row">
-                    <span style="font-weight: 600; color: #34D399; font-family: 'JetBrains Mono', monospace;">{skill.upper()}</span>
-                    <span>{" &nbsp;&bull;&nbsp; ".join(links_parts)}</span>
-                </div>
-            """
 
         st.markdown(f"""
             <div class="surface-card">
@@ -767,7 +720,6 @@ else:
                 <div style="margin-top: 10px; margin-bottom: 10px;">
                     {matched_tags}
                 </div>
-                {evidence_rows_html}
             </div>
         """, unsafe_allow_html=True)
 
