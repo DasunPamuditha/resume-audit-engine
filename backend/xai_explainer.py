@@ -1,4 +1,7 @@
+# backend/xai_explainer.py
+
 from typing import List, Dict, Any
+
 
 class XAIExplainer:
     def __init__(self, extracted_skills: List[str], audit_results: Dict):
@@ -17,14 +20,18 @@ class XAIExplainer:
         for lang in core_languages:
             score = lang_distribution.get(lang, 0.0)
             if score > 0.15:
-                status = "Verified (Strong Telemetry)"
+                status = "Confirmed in GitHub Code"
             elif score > 0.0:
-                status = "Partial Evidence (Low Code Volume)"
-                recommendations.append(f"Contribute more frequent code commits utilizing {lang.capitalize()} to strengthen portfolio verification.")
+                status = "Found (Small Amount of Code)"
+                recommendations.append(
+                    f"Add more {lang.capitalize()} code commits to make your public projects stronger."
+                )
             else:
-                status = "Unclaimed / Unverified"
+                status = "Not Found in Public Code"
                 if lang in self.extracted_skills:
-                    recommendations.append(f"Skill inflation detected: '{lang.capitalize()}' is listed on resume but lacks repository byte-count or dependency support.")
+                    recommendations.append(
+                        f"'{lang.capitalize()}' is written on the resume, but no {lang.capitalize()} code was found on GitHub."
+                    )
 
             skill_breakdown[lang] = {
                 "status": status,
@@ -32,10 +39,14 @@ class XAIExplainer:
             }
 
         if not dep_verified:
-            recommendations.append("Add explicit dependency manifest files (e.g., requirements.txt, package.json, pom.xml) to validate library usage.")
+            recommendations.append(
+                "Include project setup files (such as requirements.txt, package.json, or pom.xml) to prove which libraries were used."
+            )
 
         if anomalies:
-            recommendations.append("Resolve temporal anomalies by maintaining consistent development cadences and avoiding bulk-dump commits.")
+            recommendations.append(
+                "Push code step-by-step as you build it rather than uploading finished folders all at once."
+            )
 
         return {
             "skill_verification_breakdown": skill_breakdown,
@@ -47,24 +58,46 @@ class XAIExplainer:
 def generate_xai_rationale(*args, **kwargs) -> str:
     candidate = kwargs.get("candidate_name", "The candidate")
     score = kwargs.get("confidence_score", kwargs.get("score", "N/A"))
-    matched = kwargs.get("matched_skills", [])
-    unverified = kwargs.get("unverified_claims", kwargs.get("unverified_skills", []))
+
+    skill_gap = kwargs.get("skill_gap_data") or kwargs.get("skill_gap_skill_gap_data") or {}
+    matched = kwargs.get("matched_skills") or skill_gap.get("matched_skills", [])
+    unverified = (
+        kwargs.get("unverified_claims")
+        or kwargs.get("unverified_skills")
+        or skill_gap.get("unverified_claims", [])
+    )
     flags = kwargs.get("forensic_flags", [])
 
-    matched_str = ", ".join(matched) if matched else "none of the primary target languages"
-    unverified_str = ", ".join(unverified) if unverified else "none"
-    flag_count = len(flags) if isinstance(flags, list) else 0
+    if isinstance(flags, list):
+        actionable_flags = [
+            f for f in flags
+            if (isinstance(f, dict) and f.get("severity") in ["CRITICAL", "WARNING"])
+            or isinstance(f, str)
+        ]
+        flag_count = len(actionable_flags)
+    else:
+        flag_count = 0
 
-    rationale = f"Audit evaluation for {candidate} yielded an overall confidence score of {score}%. Cross-referencing the resume against public GitHub telemetry positively verified [{matched_str}]. "
+    matched_str = ", ".join(s.upper() for s in matched) if matched else "none of the listed skills"
+    unverified_str = ", ".join(s.upper() for s in unverified) if unverified else "none"
+
+    rationale = (
+        f"{candidate} received an overall match score of {score}%. "
+        f"Checking their resume against their public GitHub projects confirmed real work in: {matched_str}. "
+    )
 
     if unverified:
-        rationale += f"However, potential resume inflation or missing artifact evidence was noted for [{unverified_str}], which lacked sufficient repository byte-count or manifest declarations. "
+        rationale += (
+            f"However, we could not find public code or setup files for: {unverified_str}. "
+        )
     else:
-        rationale += "All declared core technical competencies were backed by repository evidence. "
+        rationale += "Every skill listed on the resume was backed up by real code on GitHub. "
 
     if flag_count > 0:
-        rationale += f"Additionally, the forensic analyzer raised {flag_count} warning/anomaly flag(s) during codebase and temporal provenance inspection."
+        rationale += (
+            f"Our commit history check also found {flag_count} item(s) worth reviewing (such as unusual commit times or bulk uploads)."
+        )
     else:
-        rationale += "Zero critical forensic or temporal anomalies were detected across the evaluated commit history."
+        rationale += "Their commit history looks natural and consistent, with no suspicious upload patterns."
 
     return rationale

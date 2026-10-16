@@ -4,348 +4,883 @@ import streamlit as st
 import requests
 import plotly.graph_objects as go
 import io
-import json
+from datetime import datetime, timezone
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-# Page Configuration
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Explainable AI Resume & Code Audit Dashboard",
-    page_icon="🛡️",
-    layout="wide"
+    page_title="VediCode — Resume & GitHub Skill Checker",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom Styling for Enterprise Look
+# -----------------------------------------------------------------------------
+# 2. CLEAN, HUMAN-CRAFTED DESIGN SYSTEM
+# -----------------------------------------------------------------------------
 st.markdown("""
     <style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin-bottom: 0px;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #FAFAFA;
+        -webkit-font-smoothing: antialiased;
     }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #64748B;
-        margin-bottom: 30px;
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #09090B !important;
+        border-right: 1px solid #27272A !important;
+        min-width: 290px !important;
     }
-    .card {
-        padding: 20px;
-        border-radius: 10px;
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        margin-bottom: 20px;
+
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stDeployButton {display: none;}
+    [data-testid="stAppDeployButton"] {display: none !important;}
+    [data-testid="stToolbarActions"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+
+    header[data-testid="stHeader"] {
+        background: transparent !important;
     }
-    .skill-badge-green {
-        background-color: #DCFCE7;
-        color: #166534;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        display: inline-block;
-        margin: 4px;
-        border: 1px solid #BBF7D0;
+
+    .block-container {
+        padding-top: 1.5rem !important;
+        padding-bottom: 3rem !important;
+        max-width: 1360px !important;
     }
-    .skill-badge-red {
-        background-color: #FEE2E2;
-        color: #991B1B;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        display: inline-block;
-        margin: 4px;
-        border: 1px solid #FECACA;
+
+    /* Top Header Bar */
+    .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0 16px 0;
+        border-bottom: 1px solid #27272A;
+        margin-bottom: 24px;
     }
-    .repo-card {
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        padding: 14px 18px;
+    .brand-title {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 800;
+        font-size: 1.3rem;
+        color: #FAFAFA;
+        letter-spacing: -0.02em;
+    }
+    .brand-sub {
+        font-size: 0.82rem;
+        color: #A1A1AA;
+    }
+
+    /* Candidate Info Bar */
+    .dossier-bar {
+        background: #121215;
+        border: 1px solid #27272A;
         border-radius: 8px;
+        padding: 16px 22px;
+        margin-bottom: 22px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+    .dossier-meta-group {
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .dossier-item-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #A1A1AA;
+        margin-bottom: 3px;
+        font-weight: 600;
+    }
+    .dossier-item-val {
+        font-size: 0.94rem;
+        color: #F4F4F5;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .dossier-date-only {
+        font-size: 0.82rem;
+        color: #A1A1AA;
+        font-family: 'JetBrains Mono', monospace;
+        background: #18181B;
+        border: 1px solid #27272A;
+        padding: 6px 12px;
+        border-radius: 6px;
+    }
+
+    /* Section Headers */
+    .sec-header {
+        margin-top: 26px;
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        border-bottom: 1px solid #27272A;
+        padding-bottom: 8px;
+    }
+    .sec-title {
+        font-size: 1.02rem;
+        font-weight: 600;
+        color: #F4F4F5;
+        margin: 0;
+    }
+    .sec-desc {
+        font-size: 0.82rem;
+        color: #A1A1AA;
+        margin: 0;
+    }
+
+    /* Cards */
+    .surface-card {
+        background: #121215;
+        border: 1px solid #27272A;
+        border-radius: 8px;
+        padding: 18px 20px;
+        height: 100%;
+    }
+    .metric-label {
+        font-size: 0.76rem;
+        font-weight: 600;
+        color: #A1A1AA;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 8px;
+    }
+    .metric-big {
+        font-size: 2.1rem;
+        font-weight: 700;
+        color: #FAFAFA;
+        line-height: 1.1;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .metric-foot {
+        font-size: 0.82rem;
+        color: #A1A1AA;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #1F1F23;
+        line-height: 1.5;
+    }
+
+    /* Status Badges */
+    .status-pass {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(16, 185, 129, 0.12);
+        border: 1px solid rgba(16, 185, 129, 0.35);
+        color: #34D399;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .status-fail {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        color: #F87171;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .dot-green {
+        width: 8px;
+        height: 8px;
+        background-color: #10B981;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .dot-red {
+        width: 8px;
+        height: 8px;
+        background-color: #EF4444;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    /* Plain-English Summary Block */
+    .narrative-block {
+        background: #121215;
+        border: 1px solid #27272A;
+        border-left: 3px solid #6366F1;
+        border-radius: 6px;
+        padding: 16px 20px;
+        color: #E4E4E7;
+        font-size: 0.93rem;
+        line-height: 1.65;
+    }
+
+    /* Skill Tags & Evidence Rows */
+    .tag-verified {
+        background: #18181B;
+        color: #E4E4E7;
+        border: 1px solid #27272A;
+        border-left: 3px solid #10B981;
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        display: inline-block;
+        margin: 4px 6px 4px 0;
+    }
+    .tag-unverified {
+        background: #18181B;
+        color: #E4E4E7;
+        border: 1px solid #27272A;
+        border-left: 3px solid #EF4444;
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        display: inline-block;
+        margin: 4px 6px 4px 0;
+    }
+    .evidence-row {
+        background: #18181B;
+        border: 1px solid #27272A;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin-top: 8px;
+        font-size: 0.82rem;
+        color: #D4D4D8;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .evidence-link {
+        color: #818CF8 !important;
+        text-decoration: none;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+    }
+    .evidence-link:hover {
+        text-decoration: underline;
+    }
+
+    /* Repository Row Item */
+    .repo-item {
+        background: #121215;
+        border: 1px solid #27272A;
+        padding: 14px 18px;
+        border-radius: 6px;
         margin-bottom: 10px;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
+    .repo-title {
+        font-weight: 600;
+        color: #FAFAFA !important;
+        text-decoration: none;
+        font-size: 0.92rem;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .repo-title:hover {
+        color: #818CF8 !important;
+    }
+    .repo-lang {
+        font-size: 0.76rem;
+        color: #D4D4D8;
+        background: #18181B;
+        border: 1px solid #27272A;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 500;
+    }
+
+    /* Primary Button */
+    div.stButton > button[kind="primary"] {
+        background-color: #FAFAFA !important;
+        color: #09090B !important;
+        border: 1px solid #FAFAFA !important;
+        font-weight: 600 !important;
+        font-size: 0.86rem !important;
+        border-radius: 6px !important;
+        padding: 0.55rem 1rem !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #E4E4E7 !important;
+        border-color: #E4E4E7 !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# Helper function to generate Plotly radial confidence gauge
+
+# -----------------------------------------------------------------------------
+# 3. HELPER FUNCTIONS
+# -----------------------------------------------------------------------------
 def plot_confidence_gauge(score):
+    bar_color = "#10B981" if score >= 70 else ("#F59E0B" if score >= 50 else "#EF4444")
+
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = score,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Confidence Score", 'font': {'size': 18, 'color': '#1E293B'}},
-        gauge = {
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "#64748B"},
-            'bar': {'color': "#0F172A"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "#E2E8F0",
-            'steps': [
-                {'range': [0, 50], 'color': '#FEE2E2'},
-                {'range': [50, 70], 'color': '#FEF3C7'},
-                {'range': [70, 100], 'color': '#DCFCE7'}
-            ],
+        mode="gauge+number",
+        value=score,
+        number={'suffix': "%", 'font': {'size': 34, 'color': '#FAFAFA', 'family': 'JetBrains Mono'}},
+        domain={'x': [0, 1], 'y': [0, 1]},
+        gauge={
+            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#27272A", 'tickfont': {'color': '#71717A', 'size': 10}},
+            'bar': {'color': bar_color, 'thickness': 0.8},
+            'bgcolor': "#18181B",
+            'borderwidth': 1,
+            'bordercolor': "#27272A",
             'threshold': {
-                'line': {'color': "#047857", 'width': 4},
-                'thickness': 0.8,
+                'line': {'color': "#FAFAFA", 'width': 2},
+                'thickness': 0.85,
                 'value': 70
             }
         }
     ))
-    fig.update_layout(height=260, margin=dict(l=25, r=25, t=40, b=10))
+    fig.update_layout(
+        height=165,
+        margin=dict(l=16, r=16, t=16, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)"
+    )
     return fig
 
-# Helper function to generate a professional PDF report using ReportLab
-def generate_pdf_report(data):
+
+def build_humanized_summary(username, score, matched_skills, unverified_skills, repos_count, crit_count, warn_count):
+    if not matched_skills and repos_count == 0 and not unverified_skills:
+        return f"We could not find any technical skills on {username}'s resume or any public GitHub projects to check."
+
+    parts = [
+        f"**{username}** got an overall skill match score of **{score}%** after checking **{repos_count}** public GitHub project(s)."
+    ]
+
+    if matched_skills:
+        skills_formatted = ", ".join([f"**{s.upper()}**" for s in matched_skills])
+        parts.append(
+            f"We compared their resume with their real GitHub code and found solid proof for: {skills_formatted}."
+        )
+    else:
+        parts.append(
+            "None of the technical skills written on the resume were found in their public GitHub projects."
+        )
+
+    if unverified_skills:
+        unverified_formatted = ", ".join([f"**{s.upper()}**" for s in unverified_skills])
+        parts.append(
+            f"We did not see public code for {unverified_formatted}. (Keep in mind: they may have used these skills in private company jobs or university coursework that isn't public on GitHub)."
+        )
+
+    if crit_count > 0 or warn_count > 0:
+        parts.append(
+            f"Our commit history check noticed **{crit_count} serious issue(s)** and **{warn_count} warning(s)**—such as unusual commit times, bulk file uploads, or missing setup files. See the details below."
+        )
+    else:
+        parts.append(
+            "Their GitHub commit history looks natural and steady, with no suspicious upload patterns or code warnings."
+        )
+
+    return " ".join(parts)
+
+
+def generate_pdf_report(data, summary_text, score):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
-    
+
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'TitleStyle',
         parent=styles['Heading1'],
-        fontSize=18,
-        textColor=colors.HexColor('#0F172A'),
+        fontSize=15,
+        textColor=colors.HexColor('#09090B'),
         spaceAfter=6
     )
     subtitle_style = ParagraphStyle(
         'SubtitleStyle',
         parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#64748B'),
-        spaceAfter=15
+        fontSize=9,
+        textColor=colors.HexColor('#52525B'),
+        spaceAfter=14
     )
     heading_style = ParagraphStyle(
         'HeadingStyle',
         parent=styles['Heading2'],
-        fontSize=13,
-        textColor=colors.HexColor('#1E293B'),
+        fontSize=11.5,
+        textColor=colors.HexColor('#18181B'),
         spaceBefore=12,
         spaceAfter=6
     )
     body_style = ParagraphStyle(
         'BodyStyle',
         parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#334155'),
+        fontSize=9.5,
+        textColor=colors.HexColor('#27272A'),
         spaceAfter=6
     )
 
-    story.append(Paragraph("Explainable AI Candidate Audit Report", title_style))
-    story.append(Paragraph(f"Candidate Username: <b>{data.get('username')}</b> | File: {data.get('filename')}", subtitle_style))
-    
-    score = data.get("confidence_score", 0)
-    status = data.get("status", "unknown").upper()
+    clean_summary = summary_text.replace("**", "")
+    role_str = data.get("target_role") or "Software Developer"
+    exec_time = data.get("execution_time_seconds", 0.0)
+
+    story.append(Paragraph("VEDICODE — CANDIDATE SKILL & GITHUB CHECK REPORT", title_style))
+    story.append(Paragraph(
+        f"GitHub User: <b>{data.get('username')}</b> | Role: <b>{role_str}</b> | Resume: {data.get('filename')} | Checked in: {exec_time}s",
+        subtitle_style
+    ))
+
+    status_label = "VERIFIED" if (score >= 70 and len(data.get("forensic_audit_summary", {}).get("critical_errors", [])) < 2) else "NEEDS REVIEW"
     repos_count = data.get("repositories_evaluated", 0)
-    
+
     summary_data = [
-        [Paragraph("<b>Confidence Score</b>", body_style), Paragraph("<b>Verdict Status</b>", body_style), Paragraph("<b>Evaluated Repos</b>", body_style)],
-        [Paragraph(f"{score} / 100", body_style), Paragraph(f"{status}", body_style), Paragraph(f"{repos_count}", body_style)]
+        [Paragraph("<b>Overall Match Score</b>", body_style), Paragraph("<b>Check Result</b>", body_style), Paragraph("<b>Checked Projects</b>", body_style)],
+        [Paragraph(f"{score}%", body_style), Paragraph(f"{status_label}", body_style), Paragraph(f"{repos_count}", body_style)]
     ]
     t = Table(summary_data, colWidths=[180, 180, 180])
     t.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#F1F5F9')),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1'))
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F4F5F5')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D4D4D8'))
     ]))
     story.append(t)
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("Explainable AI (XAI) Justification", heading_style))
-    story.append(Paragraph(data.get("xai_rationale", "No rationale provided."), body_style))
-    story.append(Spacer(1, 10))
+    story.append(Paragraph("Plain-English Summary", heading_style))
+    story.append(Paragraph(clean_summary, body_style))
+    story.append(Spacer(1, 8))
 
-    story.append(Paragraph("Granular Forensic Audit & Security Flags", heading_style))
+    story.append(Paragraph("Skills Found vs. Not Found", heading_style))
+    skill_data = data.get("skill_gap_analysis", {})
+    matched = ", ".join(s.upper() for s in skill_data.get("matched_skills", [])) or "None"
+    unverified = ", ".join(s.upper() for s in skill_data.get("unverified_claims", [])) or "None"
+
+    story.append(Paragraph(f"<b>Skills Proven by GitHub Code:</b> {matched}", body_style))
+    story.append(Paragraph(f"<b>Skills on Resume Only (Not Found in Public Code):</b> {unverified}", body_style))
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("Commit History & Code Authenticity Check", heading_style))
     forensic_summary = data.get("forensic_audit_summary", {})
     critical_errors = forensic_summary.get("critical_errors", [])
     warnings = forensic_summary.get("warnings", [])
-    
+
     if not critical_errors and not warnings:
-        story.append(Paragraph("<i>No critical errors or security warnings detected.</i>", body_style))
+        story.append(Paragraph("<i>No suspicious commit patterns or code issues were found.</i>", body_style))
     else:
         for err in critical_errors:
-            story.append(Paragraph(f"<font color='#DC2626'><b>[CRITICAL]</b></font> Category: {err.get('category')} (Line {err.get('line')}): {err.get('message')}", body_style))
+            story.append(Paragraph(
+                f"<font color='#DC2626'><b>[SERIOUS ISSUE]</b></font> {err.get('category', 'Issue')} ({err.get('line', '')}): {err.get('message', '')}",
+                body_style
+            ))
         for warn in warnings:
-            story.append(Paragraph(f"<font color='#D97706'><b>[WARNING]</b></font> Category: {warn.get('category')} (Line {warn.get('line')}): {warn.get('message')}", body_style))
-            
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("Skill-Gap & Repository Analysis", heading_style))
-    skill_data = data.get("skill_gap_analysis", {})
-    matched = ", ".join(skill_data.get("matched_skills", [])) or "None"
-    unverified = ", ".join(skill_data.get("unverified_claims", [])) or "None"
-    
-    story.append(Paragraph(f"<b>Matched Skills:</b> {matched}", body_style))
-    story.append(Paragraph(f"<b>Unverified Claims:</b> {unverified}", body_style))
+            story.append(Paragraph(
+                f"<font color='#D97706'><b>[WARNING]</b></font> {warn.get('category', 'Warning')} ({warn.get('line', '')}): {warn.get('message', '')}",
+                body_style
+            ))
 
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
-# App Title & Overview
-st.markdown('<p class="main-header">🛡️ Explainable AI Resume & Code Audit Engine</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Automated Candidate Screening, GitHub Artifact Verification & Granular Forensic Auditing</p>', unsafe_allow_html=True)
 
-# Initialize Session State safely
+# -----------------------------------------------------------------------------
+# 4. LEFT SIDEBAR (INPUT PANEL)
+# -----------------------------------------------------------------------------
+API_URL = "http://127.0.0.1:8007"
+
 if "audit_data" not in st.session_state:
     st.session_state.audit_data = None
 
-# Sidebar Controls
-st.sidebar.header("🔍 Candidate Evaluation Panel")
-github_username = st.sidebar.text_input("GitHub Username", placeholder="e.g. torvalds")
-uploaded_file = st.sidebar.file_uploader("Upload Candidate Resume (.pdf or .txt)", type=["pdf", "txt"])
+with st.sidebar:
+    st.markdown("""
+        <div style="padding: 4px 0 14px 0; border-bottom: 1px solid #27272A; margin-bottom: 18px;">
+            <div style="font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 1.15rem; color: #FAFAFA;">
+                VediCode
+            </div>
+            <div style="font-size: 0.8rem; color: #A1A1AA; margin-top: 3px;">
+                Resume & GitHub Skill Checker
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
-API_URL = "http://127.0.0.1:8007"
+    github_username = st.text_input(
+        "GitHub Username or Profile Link",
+        placeholder="e.g. DasunPamuditha or github.com/..."
+    )
+    target_role = st.text_input(
+        "Job Role (Optional)",
+        placeholder="e.g. Software Engineer"
+    )
+    uploaded_file = st.file_uploader(
+        "Upload Candidate Resume (PDF or TXT)",
+        type=["pdf", "txt"]
+    )
 
-try:
-    health_check = requests.get(f"{API_URL}/", timeout=2)
-    if health_check.status_code == 200:
-        st.sidebar.success("🟢 Backend Connected (Port 8007)")
-    else:
-        st.sidebar.warning("🟡 Backend responding with warnings.")
-except Exception:
-    st.sidebar.error("🔴 Backend Offline! Start your FastAPI server first.")
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    run_audit = st.button("Check Candidate Now", type="primary", use_container_width=True)
 
-if st.sidebar.button("🚀 Run AI Audit Pipeline", type="primary"):
-    if not github_username or not uploaded_file:
-        st.warning("⚠️ Please provide both a GitHub username and upload a resume file.")
-    else:
-        with st.spinner("Analyzing candidate profile, parsing AST/lexical code structures, and computing XAI rationale..."):
-            try:
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                response = requests.post(f"{API_URL}/audit-candidate/{github_username}", files=files, timeout=30)
-                
-                if response.status_code == 200:
-                    st.session_state.audit_data = response.json()
-                else:
-                    st.error(f"Server error: {response.status_code} - {response.text}")
-            except Exception as e:
-                st.error(f"Failed to connect to backend API: {e}")
-
-# Render Dashboard if Audit Data Exists in Session State
-if st.session_state.audit_data:
-    data = st.session_state.audit_data
-    
-    st.markdown("### 📊 Executive Summary & Verdict")
-    col1, col2, col3 = st.columns([1.2, 1, 1])
-    
-    with col1:
-        score = data.get("confidence_score", 0)
-        st.plotly_chart(plot_confidence_gauge(score), use_container_width=True)
-        
-    with col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        status = data.get("status", "unknown").upper()
-        if status == "VERIFIED":
-            st.success(f"**Verdict Status:**\n\n### {status}")
+    if run_audit:
+        if not github_username or not uploaded_file:
+            st.warning("Please enter a GitHub username (or link) and upload a resume first.")
         else:
-            st.error(f"**Verdict Status:**\n\n### {status}")
-            
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.metric(label="Evaluated Repositories", value=data.get("repositories_evaluated", 0))
-        
-        pdf_bytes = generate_pdf_report(data)
-        st.download_button(
-            label="📥 Download PDF Report",
-            data=pdf_bytes,
-            file_name=f"audit_report_{data.get('username', 'candidate')}.pdf",
-            mime="application/pdf"
-        )
-        
-    st.markdown("### 🤖 Explainable AI (XAI) Justification")
-    st.info(data.get("xai_rationale", "No rationale generated."))
-    
-    st.markdown("### 🔍 Granular Forensic Audit & Security Flags")
-    forensic_summary = data.get("forensic_audit_summary", {})
-    total_flags = forensic_summary.get("total_flags", 0)
-    
-    if total_flags == 0:
-        st.success("✨ Zero security issues or forensic anomalies detected across codebase analysis.")
-    else:
-        critical_errors = forensic_summary.get("critical_errors", [])
-        warnings = forensic_summary.get("warnings", [])
-        notices = forensic_summary.get("notices", [])
-        
-        f_tab1, f_tab2, f_tab3 = st.tabs([
-            f"🔴 Critical Errors ({len(critical_errors)})", 
-            f"🟡 Warnings ({len(warnings)})", 
-            f"🔵 Notices ({len(notices)})"
-        ])
-        
-        with f_tab1:
-            if critical_errors:
-                for err in critical_errors:
-                    st.error(f"**Category:** {err.get('category')} | **Line {err.get('line', 'N/A')}:** {err.get('message')}")
-            else:
-                st.markdown("No critical errors found.")
-                
-        with f_tab2:
-            if warnings:
-                for warn in warnings:
-                    st.warning(f"**Category:** {warn.get('category')} | **Line {warn.get('line', 'N/A')}:** {warn.get('message')}")
-            else:
-                st.markdown("No warnings found.")
-                
-        with f_tab3:
-            if notices:
-                for note in notices:
-                    st.info(f"**Category:** {note.get('category')} | **Line {note.get('line', 'N/A')}:** {note.get('message')}")
-            else:
-                st.markdown("No notices found.")
+            with st.spinner("Reading resume and checking GitHub projects & commit history..."):
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                    form_data = {"target_role": target_role}
+                    response = requests.post(
+                        f"{API_URL}/audit-candidate/{github_username.strip()}",
+                        files=files,
+                        data=form_data,
+                        timeout=60
+                    )
 
-    st.markdown("### 🧬 Skill-Gap & Repository Evidence")
-    sg_col1, sg_col2 = st.columns(2)
-    
+                    if response.status_code == 200:
+                        st.session_state.audit_data = response.json()
+                    else:
+                        st.error(f"Could not complete check ({response.status_code}): {response.text}")
+                except Exception as e:
+                    st.error(f"Could not connect to the backend server: {e}")
+
+    st.markdown("""
+        <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #27272A; font-size: 0.76rem; color: #71717A; line-height: 1.5;">
+            <b>Privacy Note:</b> Uploaded resumes are checked in memory only and never saved on disk. Personal phone numbers and emails are automatically hidden.
+        </div>
+    """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# 5. TOP BAR
+# -----------------------------------------------------------------------------
+st.markdown("""
+    <div class="topbar">
+        <div class="brand-title">VediCode</div>
+        <div class="brand-sub">Simple, Evidence-Based Resume & GitHub Verification</div>
+    </div>
+""", unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# 6. MAIN WORKSPACE CONTENT
+# -----------------------------------------------------------------------------
+if not st.session_state.audit_data:
+    st.markdown("""
+        <div class="surface-card" style="padding: 52px 32px; text-align: center; margin-top: 16px;">
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #A1A1AA; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">
+                Step 1: Enter Details on the Left Panel
+            </div>
+            <h3 style="color: #FAFAFA; font-weight: 600; font-size: 1.35rem; margin-bottom: 10px;">
+                Check If a Resume Matches Real GitHub Code
+            </h3>
+            <p style="color: #A1A1AA; font-size: 0.92rem; max-width: 580px; margin: 0 auto 26px auto; line-height: 1.6;">
+                Enter the candidate's GitHub username (or link) and upload their PDF resume on the left.
+                We will check their real code, project setup files, and commit history in a few seconds.
+            </p>
+            <div style="display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+                <span class="repo-lang">1. Reads Resume Skills</span>
+                <span class="repo-lang">2. Checks Project Setup Files</span>
+                <span class="repo-lang">3. Catches Unnatural Commits</span>
+                <span class="repo-lang">4. Shows Direct Code Links</span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+else:
+    data = st.session_state.audit_data
+    username = data.get("username", "unknown")
+    role_display = data.get("target_role") or "Software Developer"
+    filename = data.get("filename", "Resume.pdf")
+    exec_time = data.get("execution_time_seconds", 0.0)
+    repos_count = data.get("repositories_evaluated", 0)
+
+    forensic_summary = data.get("forensic_audit_summary", {})
+    critical_errors = forensic_summary.get("critical_errors", [])
+    warnings = forensic_summary.get("warnings", [])
+    notices = forensic_summary.get("notices", [])
+    total_flags = len(critical_errors) + len(warnings)
+
     skill_data = data.get("skill_gap_analysis", {})
     matched_skills = skill_data.get("matched_skills", [])
     unverified_skills = skill_data.get("unverified_claims", [])
-    
-    with sg_col1:
-        st.markdown("#### ✅ Verified / Matched Skills")
-        if matched_skills:
-            badges_html = "".join([f'<span class="skill-badge-green">✓ {skill.upper()}</span>' for skill in matched_skills])
-            st.markdown(f"<div style='padding: 10px 0;'>{badges_html}</div>", unsafe_allow_html=True)
-        else:
-            st.info("No verified skills matched against codebase artifacts.")
-            
-    with sg_col2:
-        st.markdown("#### ⚠️ Unverified Claims / Gaps")
-        if unverified_skills:
-            badges_html = "".join([f'<span class="skill-badge-red">⚠ {skill.upper()}</span>' for skill in unverified_skills])
-            st.markdown(f"<div style='padding: 10px 0;'>{badges_html}</div>", unsafe_allow_html=True)
-        else:
-            st.success("✨ Zero skill gaps or unverified claims detected!")
-            
-    st.markdown("#### 📂 Evaluated Public Repositories")
-    repos = data.get("repositories", [])
-    if repos:
-        for repo in repos:
-            repo_name = repo.get('name')
-            repo_url = repo.get('html_url')
-            stars = repo.get('stargazers_count', 0)
-            lang = repo.get('language', 'Mixed/Unknown')
-            
-            st.markdown(f"""
-                <div class="repo-card">
-                    <div>
-                        <a href="{repo_url}" target="_blank" style="font-weight: 600; color: #0284C7; text-decoration: none; font-size: 1.05rem;">📦 {repo_name}</a>
-                        <div style="font-size: 0.8rem; color: #64748B; margin-top: 2px;">Primary Language: <b>{lang}</b></div>
-                    </div>
-                    <div style="text-align: right; font-size: 0.85rem; color: #475569;">
-                        ⭐ <b>{stars}</b> stars
-                    </div>
+    evidence_map = skill_data.get("skill_evidence_map", {})
+    heuristic = data.get("heuristic_breakdown", {})
+
+    raw_score = data.get("confidence_score", 0)
+    score = 0 if (not matched_skills and (repos_count == 0 or raw_score == 0)) else raw_score
+
+    is_verified = (score >= 70 and len(critical_errors) < 2)
+    status_text = "VERIFIED" if is_verified else "NEEDS REVIEW"
+
+    gmt_now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M GMT")
+    human_summary = build_humanized_summary(
+        username, score, matched_skills, unverified_skills, repos_count, len(critical_errors), len(warnings)
+    )
+
+    # --- CANDIDATE HEADER BAR ---
+    st.markdown(f"""
+        <div class="dossier-bar">
+            <div class="dossier-meta-group">
+                <div>
+                    <div class="dossier-item-label">GitHub Account</div>
+                    <div class="dossier-item-val">@{username}</div>
                 </div>
-            """, unsafe_allow_html=True)
+                <div>
+                    <div class="dossier-item-label">Job Role</div>
+                    <div class="dossier-item-val">{role_display}</div>
+                </div>
+                <div>
+                    <div class="dossier-item-label">Uploaded Resume</div>
+                    <div class="dossier-item-val">{filename}</div>
+                </div>
+            </div>
+            <div class="dossier-date-only">
+                Checked in {exec_time}s &bull; {gmt_now}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- ROW 1: 3 MAIN SUMMARY CARDS ---
+    col1, col2, col3 = st.columns([1.25, 1, 1])
+
+    with col1:
+        st.markdown("""
+            <div class="surface-card" style="padding-bottom: 8px;">
+                <div class="metric-label">Overall Skill Match Score</div>
+        """, unsafe_allow_html=True)
+        st.plotly_chart(plot_confidence_gauge(score), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col2:
+        badge_html = (
+            f'<div class="status-pass"><span class="dot-green"></span>{status_text}</div>'
+            if is_verified
+            else f'<div class="status-fail"><span class="dot-red"></span>{status_text}</div>'
+        )
+        s_lang_val = heuristic.get("s_lang", 0.0)
+        s_dep_val = heuristic.get("s_dep", 0.0)
+        s_temp_val = heuristic.get("s_temp", 0.0)
+        st.markdown(f"""
+            <div class="surface-card">
+                <div class="metric-label">Check Result & Score Breakdown</div>
+                <div style="margin: 14px 0 14px 0;">
+                    {badge_html}
+                </div>
+                <div class="metric-foot">
+                    <b>Code Languages:</b> <span style="color:#FAFAFA;">{s_lang_val}%</span><br>
+                    <b>Setup Files (Dependencies):</b> <span style="color:#FAFAFA;">{s_dep_val}%</span><br>
+                    <b>Real Commit History:</b> <span style="color:#FAFAFA;">{s_temp_val}%</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+            <div class="surface-card">
+                <div class="metric-label">GitHub Projects & Warnings</div>
+                <div class="metric-big">{repos_count} <span style="font-size: 0.9rem; color: #A1A1AA; font-weight: 500;">public projects</span></div>
+                <div class="metric-foot">
+                    Proven Skills: <span style="color:#34D399; font-weight:600;">{len(matched_skills)}</span> &nbsp;&bull;&nbsp;
+                    Issues / Warnings: <span style="color:#F87171; font-weight:600;">{total_flags}</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        pdf_bytes = generate_pdf_report(data, human_summary, score)
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"VediCode_Report_{username}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+    # --- SECTION: PLAIN-ENGLISH SUMMARY ---
+    st.markdown("""
+        <div class="sec-header">
+            <p class="sec-title">Plain-English Summary</p>
+            <p class="sec-desc">A quick, easy-to-read summary of what we found</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+        <div class="narrative-block">
+            {human_summary}
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- SECTION: SKILLS FOUND VS NOT FOUND (WITH DIRECT CLICKABLE EVIDENCE LINKS) ---
+    st.markdown("""
+        <div class="sec-header">
+            <p class="sec-title">Skills on Resume vs. Real GitHub Code</p>
+            <p class="sec-desc">Side-by-side comparison with direct links to the exact project, setup file, and commit</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    sg_col1, sg_col2 = st.columns(2)
+
+    with sg_col1:
+        matched_tags = (
+            "".join([f'<span class="tag-verified">{skill.upper()}</span>' for skill in matched_skills])
+            if matched_skills
+            else '<span style="color: #71717A; font-size: 0.86rem;">No matching skills found on GitHub.</span>'
+        )
+        evidence_rows_html = ""
+        for skill in matched_skills:
+            ev = evidence_map.get(skill, {})
+            r_name = ev.get("repo_name") or "Project"
+            r_url = ev.get("repo_url") or "#"
+            c_sha = ev.get("commit_sha")
+            c_url = ev.get("commit_url") or r_url
+            m_name = ev.get("manifest_name")
+            m_url = ev.get("manifest_url")
+
+            links_parts = [f'<a href="{r_url}" target="_blank" class="evidence-link">Project: {r_name} &nearr;</a>']
+            if m_name and m_url:
+                links_parts.append(f'<a href="{m_url}" target="_blank" class="evidence-link">Setup File: {m_name.split("/")[-1]} &nearr;</a>')
+            if c_sha:
+                links_parts.append(f'<a href="{c_url}" target="_blank" class="evidence-link">Commit: {c_sha} &nearr;</a>')
+
+            evidence_rows_html += f"""
+                <div class="evidence-row">
+                    <span style="font-weight: 600; color: #34D399; font-family: 'JetBrains Mono', monospace;">{skill.upper()}</span>
+                    <span>{" &nbsp;&bull;&nbsp; ".join(links_parts)}</span>
+                </div>
+            """
+
+        st.markdown(f"""
+            <div class="surface-card">
+                <div class="metric-label" style="color: #34D399;">Skills Proven by GitHub Code ({len(matched_skills)})</div>
+                <div style="margin-top: 10px; margin-bottom: 10px;">
+                    {matched_tags}
+                </div>
+                {evidence_rows_html}
+            </div>
+        """, unsafe_allow_html=True)
+
+    with sg_col2:
+        unverified_html = (
+            "".join([f'<span class="tag-unverified">{skill.upper()}</span>' for skill in unverified_skills])
+            if unverified_skills
+            else '<span style="color: #A1A1AA; font-size: 0.86rem;">All resume skills were proven on GitHub!</span>'
+        )
+        helper_note = (
+            '<div style="margin-top: 14px; font-size: 0.8rem; color: #A1A1AA; line-height: 1.5; border-top: 1px solid #1F1F23; padding-top: 10px;">'
+            '<b>Fair Interview Tip:</b> If a skill is listed here, it means we did not see it in their <i>public</i> GitHub projects. '
+            'Ask the candidate about these skills during their interview, as they may have used them in private company work.'
+            '</div>'
+            if unverified_skills else ""
+        )
+        st.markdown(f"""
+            <div class="surface-card">
+                <div class="metric-label" style="color: #F87171;">Skills Listed on Resume Only ({len(unverified_skills)})</div>
+                <div style="margin-top: 10px;">
+                    {unverified_html}
+                </div>
+                {helper_note}
+            </div>
+        """, unsafe_allow_html=True)
+
+    # --- SECTION: COMMIT HISTORY & CODE AUTHENTICITY CHECK (FORENSICS) ---
+    st.markdown("""
+        <div class="sec-header">
+            <p class="sec-title">Commit History & Code Authenticity Check</p>
+            <p class="sec-desc">Checks for unnatural commit dates, bulk uploads, browser drag-and-drop, someone else writing code, and code safety</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    if len(critical_errors) == 0 and len(warnings) == 0:
+        st.markdown("""
+            <div class="surface-card" style="padding: 16px 22px; border-left: 3px solid #10B981;">
+                <span style="color: #E4E4E7; font-size: 0.9rem; font-weight: 500;">
+                    ✅ Everything looks good! We found no suspicious commit dates, bulk code dumps, or security issues in their repositories.
+                </span>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        st.markdown("_No public repositories found or mock fallback utilized._")
+        f_tab1, f_tab2, f_tab3 = st.tabs([
+            f"Serious Issues ({len(critical_errors)})",
+            f"Warnings to Review ({len(warnings)})",
+            f"Other Code Notes ({len(notices)})"
+        ])
+
+        with f_tab1:
+            if critical_errors:
+                for err in critical_errors:
+                    ref_label = err.get("line", "Check")
+                    url_link = f" — [Open on GitHub]({err['url']})" if err.get("url") else ""
+                    st.error(f"**{err.get('category', 'Serious Issue')}** (`{ref_label}`): {err.get('message', '')}{url_link}")
+            else:
+                st.caption("No serious issues found.")
+
+        with f_tab2:
+            if warnings:
+                for warn in warnings:
+                    ref_label = warn.get("line", "Check")
+                    url_link = f" — [Open on GitHub]({warn['url']})" if warn.get("url") else ""
+                    st.warning(f"**{warn.get('category', 'Warning')}** (`{ref_label}`): {warn.get('message', '')}{url_link}")
+            else:
+                st.caption("No warnings found.")
+
+        with f_tab3:
+            if notices:
+                for note in notices:
+                    ref_label = note.get("line", "Info")
+                    st.info(f"**{note.get('category', 'Note')}** (`{ref_label}`): {note.get('message', '')}")
+            else:
+                st.caption("No extra notes.")
+
+    # --- SECTION: CHECKED GITHUB PROJECTS ---
+    st.markdown("""
+        <div class="sec-header">
+            <p class="sec-title">Checked GitHub Projects</p>
+            <p class="sec-desc">Click any project name below to open it on GitHub</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    repos = data.get("repositories", [])
+    if matched_skills and repos:
+        repo_cols = st.columns(2)
+        for idx, repo in enumerate(repos):
+            repo_name = repo.get('name', 'unnamed-repository')
+            repo_url = repo.get('html_url', '#')
+            stars = repo.get('stargazers_count', 0)
+            lang = repo.get('language') or 'Multiple Languages'
+            is_fork = repo.get('fork', False)
+            fork_badge = " (Copied Fork)" if is_fork else ""
+
+            with repo_cols[idx % 2]:
+                st.markdown(f"""
+                    <div class="repo-item">
+                        <div>
+                            <a href="{repo_url}" target="_blank" class="repo-title">{repo_name}{fork_badge} &nearr;</a>
+                            <div style="margin-top: 6px;">
+                                <span class="repo-lang">{lang}</span>
+                            </div>
+                        </div>
+                        <div style="text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: #A1A1AA;">
+                            {stars} stars
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+            <div class="surface-card" style="padding: 16px 22px; border-left: 3px solid #EF4444;">
+                <span style="color: #E4E4E7; font-size: 0.88rem; font-weight: 500;">
+                    No public GitHub projects matched the skills written on the resume.
+                </span>
+            </div>
+        """, unsafe_allow_html=True)
