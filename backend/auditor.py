@@ -13,12 +13,183 @@ def _parse_iso_date(date_str: str) -> datetime:
 class ResumeAuditor:
     """
     Core heuristic auditor that strictly intersects CV self-declared skill claims
-    with live GitHub repository telemetry, dependency manifests, and temporal Git provenance.
+    with live GitHub repository telemetry, dependency manifests, temporal Git provenance,
+    cross-repository coding pattern consistency, and Individual vs. Group project ownership.
     """
     def __init__(self, extracted_skills: List[str], repo_telemetry: Dict, username: str = ""):
         self.extracted_skills = [s.strip().lower() for s in extracted_skills if s]
         self.repo_telemetry = repo_telemetry or {}
         self.username = (username or "").strip()
+
+    def analyze_project_ownership(self) -> Dict[str, Any]:
+        """
+        Feature 2: Verifies whether each repository is an Individual (Solo) Project
+        or a Group (Collaborative) Project, and calculates the candidate's commit percentage.
+        """
+        repos_list = self.repo_telemetry.get("repos_list", [])
+        repo_contributors_map = self.repo_telemetry.get("repo_contributors_map", {})
+        repo_commits_map = self.repo_telemetry.get("repo_commits_map", {})
+        target_user_lower = self.username.lower()
+
+        ownership_by_repo: Dict[str, Dict[str, Any]] = {}
+        ownership_flags: List[Dict[str, Any]] = []
+        individual_count = 0
+        group_count = 0
+
+        for r in repos_list:
+            rname = r.get("name", "Project")
+            rurl = r.get("html_url", "")
+            is_fork = bool(r.get("fork", False))
+
+            contributors = repo_contributors_map.get(rname, [])
+            r_commits = repo_commits_map.get(rname, [])
+
+            # Determine distinct human contributors and candidate's share
+            if contributors:
+                total_contribs = len(contributors)
+                total_commits_count = sum(int(c.get("contributions", 1)) for c in contributors) or 1
+                candidate_commits = sum(
+                    int(c.get("contributions", 0))
+                    for c in contributors
+                    if str(c.get("login", "")).lower() == target_user_lower
+                )
+                # If candidate used a local git name or solo repo with 1 contributor
+                if candidate_commits == 0 and total_contribs == 1 and not is_fork:
+                    candidate_commits = total_commits_count
+                contributor_names = [str(c.get("login", "")) for c in contributors if c.get("login")]
+            elif r_commits:
+                authors_map: Dict[str, int] = {}
+                for c in r_commits:
+                    gh_author = c.get("author")
+                    login = (gh_author.get("login") if isinstance(gh_author, dict) else "") or ""
+                    if not login:
+                        c_author = (c.get("commit") or {}).get("author") or {}
+                        login = c_author.get("name") or "Author"
+                    authors_map[login] = authors_map.get(login, 0) + 1
+                total_contribs = max(1, len(authors_map))
+                total_commits_count = len(r_commits)
+                candidate_commits = sum(
+                    count for name, count in authors_map.items()
+                    if target_user_lower in name.lower() or total_contribs == 1
+                )
+                contributor_names = list(authors_map.keys())
+            else:
+                total_contribs = 1
+                total_commits_count = 1
+                candidate_commits = 0 if is_fork else 1
+                contributor_names = [self.username] if self.username else ["Owner"]
+
+            share_pct = round((candidate_commits / max(total_commits_count, 1)) * 100.0, 1)
+            share_pct = min(100.0, max(0.0, share_pct))
+
+            if is_fork:
+                project_type = "Copied Fork"
+            elif total_contribs <= 1:
+                project_type = "Individual Project"
+                individual_count += 1
+            else:
+                project_type = "Group Project"
+                group_count += 1
+
+            ownership_by_repo[rname] = {
+                "project_type": project_type,
+                "contributors_count": total_contribs,
+                "candidate_contribution_pct": share_pct,
+                "contributors": contributor_names[:5]
+            }
+
+            # Attach metadata directly to the repo object so Frontend UI can render it easily
+            r["project_type"] = project_type
+            r["contributors_count"] = total_contribs
+            r["candidate_contribution_pct"] = share_pct
+            r["contributors_list"] = contributor_names[:5]
+
+            # Forensic Check: Low personal contribution in a Group Project
+            if project_type == "Group Project":
+                others_str = ", ".join(f"@{u}" for u in contributor_names[:4])
+                if share_pct < 25.0:
+                    ownership_flags.append({
+                        "severity": "WARNING",
+                        "category": f"Low Contribution in Group Project ({rname})",
+                        "line": f"{share_pct}% Share ({total_contribs} Contributors)",
+                        "message": (
+                            f"Project '{rname}' is a Group Project with {total_contribs} contributors ({others_str}), "
+                            f"and @{self.username} authored only {share_pct}% of the commits."
+                        ),
+                        "url": rurl
+                    })
+                else:
+                    ownership_flags.append({
+                        "severity": "INFO",
+                        "category": f"Verified Group Project ({rname})",
+                        "line": f"{share_pct}% Share ({total_contribs} Contributors)",
+                        "message": (
+                            f"Project '{rname}' is a collaborative Group Project ({total_contribs} contributors: {others_str}). "
+                            f"@{self.username} authored {share_pct}% of the commits."
+                        ),
+                        "url": rurl
+                    })
+
+        return {
+            "individual_projects_count": individual_count,
+            "group_projects_count": group_count,
+            "ownership_by_repo": ownership_by_repo,
+            "ownership_flags": ownership_flags
+        }
+
+    def analyze_cross_repo_coding_patterns(self, style_signatures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Feature 1: Compares coding style signatures across different repositories
+        to detect if different repositories use conflicting coding patterns.
+        """
+        pattern_flags: List[Dict[str, Any]] = []
+        if len(style_signatures) < 2:
+            return pattern_flags
+
+        by_lang: Dict[str, List[Dict[str, Any]]] = {}
+        for sig in style_signatures:
+            lang = sig.get("language", "unknown")
+            by_lang.setdefault(lang, []).append(sig)
+
+        for lang, sigs in by_lang.items():
+            if len(sigs) < 2:
+                continue
+
+            naming_map: Dict[str, List[str]] = {}
+            indent_map: Dict[str, List[str]] = {}
+
+            for s in sigs:
+                fname = s.get("filename", "file")
+                n_style = s.get("naming_convention", "snake_case")
+                i_style = s.get("indentation", "4-space")
+                naming_map.setdefault(n_style, []).append(fname)
+                indent_map.setdefault(i_style, []).append(fname)
+
+            if len(naming_map) > 1:
+                parts = [f"{style} in {files[0]}" for style, files in naming_map.items()]
+                pattern_flags.append({
+                    "severity": "WARNING",
+                    "category": f"Cross-Repository Coding Pattern Shift ({lang.capitalize()})",
+                    "line": "Multi-Repo Pattern Check",
+                    "message": (
+                        f"Different {lang.capitalize()} coding patterns were found across repositories "
+                        f"({'; '.join(parts)}). A single developer usually keeps the same naming habit across projects."
+                    )
+                })
+
+            if len(indent_map) > 1:
+                parts = [f"{istyle} indentation in {files[0]}" for istyle, files in indent_map.items()]
+                pattern_flags.append({
+                    "severity": "WARNING",
+                    "category": f"Cross-Repository Formatting Shift ({lang.capitalize()})",
+                    "line": "Multi-Repo Style Check",
+                    "message": (
+                        f"Indentation habits change across {lang.capitalize()} files ({'; '.join(parts)}), "
+                        f"which can happen when projects are written on different machines or by different people."
+                    )
+                })
+
+        return pattern_flags
 
     def analyze_temporal_provenance(self, commits_data: List[Dict]) -> Tuple[float, List[str]]:
         """
@@ -54,6 +225,7 @@ class ResumeAuditor:
         distinct_author_emails = set()
 
         target_user_lower = self.username.lower()
+        repo_contributors_map = self.repo_telemetry.get("repo_contributors_map", {})
 
         for commit in commits_data:
             sha_short = (commit.get("sha") or "commit")[:7]
@@ -101,7 +273,6 @@ class ResumeAuditor:
                 abs_delta_hours = abs(signed_delta_seconds) / 3600.0
                 timestamp_deltas_hours.append(abs_delta_hours)
 
-                # Negative delta (> 5 mins): Committer date is BEFORE Author date (Clock Manipulation)
                 if signed_delta_seconds < -300:
                     clock_inversion_count += 1
                     flag_msg = (
@@ -118,7 +289,6 @@ class ResumeAuditor:
                         "url": commit_url
                     })
 
-                # Severe positive delta (> 24 hours): Rebased, cherry-picked, or proxy patch applied late
                 elif abs_delta_hours >= 24.0:
                     large_delta_count += 1
                     if large_delta_count <= 3:
@@ -136,7 +306,6 @@ class ResumeAuditor:
                             "url": commit_url
                         })
 
-                # Moderate positive delta (1 hour to 24 hours)
                 elif 1.0 <= abs_delta_hours < 24.0:
                     moderate_delta_count += 1
                     if moderate_delta_count <= 2:
@@ -152,7 +321,6 @@ class ResumeAuditor:
                             "url": commit_url
                         })
 
-                # Track interval between consecutive commits in the same repo
                 if previous_date and (previous_repo == repo_name or previous_repo is None):
                     interval_sec = abs((a_date - previous_date).total_seconds())
                     commit_intervals_seconds.append(interval_sec)
@@ -163,23 +331,38 @@ class ResumeAuditor:
             # 3. Check Third-Party / Proxy Author Identity
             gh_author = commit.get("author")
             gh_login = (gh_author.get("login") if isinstance(gh_author, dict) else "") or ""
+            repo_contribs = repo_contributors_map.get(repo_name, [])
+            is_multi_contributor_repo = len(repo_contribs) > 1
+
             if target_user_lower and gh_login and gh_login.lower() != target_user_lower and not gh_login.endswith("[bot]"):
                 external_author_count += 1
                 if external_author_count <= 2:
-                    flag_msg = (
-                        f"In project '{repo_name}', commit {sha_short} was written by a different GitHub user "
-                        f"('@{gh_login}') instead of '@{self.username}'. Someone else may have written this code."
-                    )
-                    anomalies.append(flag_msg)
-                    self.detailed_forensic_flags.append({
-                        "severity": "CRITICAL",
-                        "category": "Code Written by Another GitHub User",
-                        "line": f"Commit {sha_short}",
-                        "message": flag_msg,
-                        "url": commit_url
-                    })
+                    if is_multi_contributor_repo:
+                        flag_msg = (
+                            f"In collaborative project '{repo_name}', commit {sha_short} was authored by team member "
+                            f"'@{gh_login}' rather than '@{self.username}'."
+                        )
+                        self.detailed_forensic_flags.append({
+                            "severity": "WARNING",
+                            "category": "Group Project Team Member Commit",
+                            "line": f"Commit {sha_short}",
+                            "message": flag_msg,
+                            "url": commit_url
+                        })
+                    else:
+                        flag_msg = (
+                            f"In project '{repo_name}', commit {sha_short} was written by a different GitHub user "
+                            f"('@{gh_login}') instead of '@{self.username}'. Someone else may have written this code."
+                        )
+                        anomalies.append(flag_msg)
+                        self.detailed_forensic_flags.append({
+                            "severity": "CRITICAL",
+                            "category": "Code Written by Another GitHub User",
+                            "line": f"Commit {sha_short}",
+                            "message": flag_msg,
+                            "url": commit_url
+                        })
 
-            # Check Author vs Committer name/email split (excluding GitHub web-flow)
             if (
                 author_name.lower() != committer_name.lower()
                 and committer_name.lower() not in ["github", "unknown"]
@@ -211,7 +394,7 @@ class ResumeAuditor:
                 "message": msg
             })
 
-        # 5. "Machine-Gun" Burst Commit Cadence Check (< 180 seconds / 3 minutes between commits)
+        # 5. "Machine-Gun" Burst Commit Cadence Check
         burst_count = sum(1 for sec in commit_intervals_seconds if 0 < sec < 180.0)
         if (total_commits > 4 and burst_count >= max(2, int(total_commits * 0.35))) or burst_count >= 4:
             msg = (
@@ -245,7 +428,7 @@ class ResumeAuditor:
             emails_str = ", ".join(list(distinct_author_emails)[:3])
             msg = (
                 f"Found {len(distinct_author_emails)} different author email addresses across commits ({emails_str}). "
-                f"This can happen if multiple people or different computers pushed code to this account."
+                f"This happens when multiple people or different computers push code to the repositories."
             )
             anomalies.append(msg)
             self.detailed_forensic_flags.append({
@@ -255,7 +438,7 @@ class ResumeAuditor:
                 "message": msg
             })
 
-        # 8. Repository-Level Forensic Checks (Single-Commit Bulk Dumps, Upload-and-Abandon, Forks)
+        # 8. Repository-Level Forensic Checks
         repos_list = self.repo_telemetry.get("repos_list", [])
         repo_commits_map = self.repo_telemetry.get("repo_commits_map", {})
 
@@ -285,7 +468,6 @@ class ResumeAuditor:
                 created_str = r.get("created_at")
                 pushed_str = r.get("pushed_at")
 
-                # Single-Commit Monolithic Bulk Dump
                 if len(r_commits) == 1 and rsize_kb > 15:
                     sha_s = (r_commits[0].get("sha") or "init")[:7]
                     msg = (
@@ -314,7 +496,6 @@ class ResumeAuditor:
                         "url": r.get("html_url", "")
                     })
 
-                # Upload-and-Abandon Lifespan (< 15 mins between repo creation and last push)
                 if created_str and pushed_str and rsize_kb > 10:
                     c_dt = _parse_iso_date(created_str)
                     p_dt = _parse_iso_date(pushed_str)
@@ -333,7 +514,6 @@ class ResumeAuditor:
                             "url": r.get("html_url", "")
                         })
 
-        # Compute calibrated S_temp score (0.0 to 1.0)
         crit_count = sum(1 for f in self.detailed_forensic_flags if f.get("severity") == "CRITICAL")
         warn_count = sum(1 for f in self.detailed_forensic_flags if f.get("severity") == "WARNING")
         if not self.detailed_forensic_flags and anomalies:
@@ -349,12 +529,21 @@ class ResumeAuditor:
         languages = self.repo_telemetry.get("languages", {})
         dependencies = self.repo_telemetry.get("dependencies", [])
         manifest_contents = self.repo_telemetry.get("manifest_contents", {})
+        style_signatures = self.repo_telemetry.get("style_signatures", [])
 
-        # 1. Always run temporal provenance analysis so forensic flags are captured
+        # 1. Run Temporal Provenance Analysis
         s_temp, anomalies = self.analyze_temporal_provenance(commits)
-        forensic_flags = getattr(self, "detailed_forensic_flags", [])
+        forensic_flags = list(getattr(self, "detailed_forensic_flags", []))
 
-        # 2. Determine active GitHub languages and frameworks from byte counts & manifests
+        # 2. Run Individual vs. Group Project Ownership Verification (Feature 2)
+        ownership_summary = self.analyze_project_ownership()
+        forensic_flags.extend(ownership_summary.get("ownership_flags", []))
+
+        # 3. Run Cross-Repository Coding Pattern Consistency Check (Feature 1)
+        cross_repo_pattern_flags = self.analyze_cross_repo_coding_patterns(style_signatures)
+        forensic_flags.extend(cross_repo_pattern_flags)
+
+        # 4. Determine active GitHub languages and frameworks from byte counts & manifests
         total_bytes = sum(languages.values()) if languages else 1
         manifest_blob = " ".join(manifest_contents.values()).lower()
         dep_names_blob = " ".join(dependencies).lower()
@@ -362,16 +551,17 @@ class ResumeAuditor:
         github_detected_langs = {}
         tracked_techs = [
             "python", "javascript", "typescript", "java", "react",
-            "fastapi", "node", "docker", "sql", "flask", "django", "spring"
+            "fastapi", "node", "docker", "sql", "flask", "django", "spring",
+            "html/css", "php", "c#/.net", "c/c++", "mobile", "aws/cloud"
         ]
         for tech in tracked_techs:
-            lang_bytes = sum(v for k, v in languages.items() if tech in k.lower())
+            lang_bytes = sum(v for k, v in languages.items() if tech in k.lower() or k.lower() in tech)
             in_manifests = (tech in manifest_blob) or (tech in dep_names_blob)
             if lang_bytes > 0 or in_manifests:
                 ratio = (lang_bytes / total_bytes) if (lang_bytes > 0 and total_bytes > 0) else 0.35
                 github_detected_langs[tech] = max(0.25, min(1.0, ratio))
 
-        # 3. STRICT INTERSECTION: Only score skills claimed on CV AND present in GitHub
+        # 5. STRICT INTERSECTION: Only score skills claimed on CV AND present in GitHub
         matched_skills = []
         unverified_claims = []
 
@@ -386,7 +576,6 @@ class ResumeAuditor:
             else:
                 unverified_claims.append(skill)
 
-        # Log unverified CV claims as explicit forensic warnings in simple English
         if unverified_claims:
             unv_str = ", ".join(s.upper() for s in unverified_claims)
             forensic_flags.append({
@@ -408,7 +597,6 @@ class ResumeAuditor:
                 "message": "No standard dependency files (like requirements.txt, package.json, or pom.xml) were found in the public projects."
             })
 
-        # If no skills claimed on CV or zero intersection with GitHub, score is strictly 0.0%
         if not self.extracted_skills or not matched_skills:
             if self.extracted_skills and not matched_skills:
                 forensic_flags.insert(0, {
@@ -425,12 +613,12 @@ class ResumeAuditor:
                 "dependency_verified": False,
                 "anomalies": anomalies,
                 "forensic_flags": forensic_flags,
+                "project_ownership": ownership_summary,
                 "language_distribution": {},
                 "matched_skills": [],
                 "unverified_claims": self.extracted_skills
             }
 
-        # 4. Compute multi-factor heuristic scores (S_lang, S_dep, S_temp)
         lang_scores = {lang: github_detected_langs.get(lang, 0.5) for lang in matched_skills}
         match_coverage = len(matched_skills) / max(len(self.extracted_skills), 1)
         avg_lang_presence = sum(lang_scores.values()) / max(len(lang_scores), 1)
@@ -438,7 +626,6 @@ class ResumeAuditor:
 
         s_dep = 1.0 if dep_verified else 0.55
 
-        # Weighted heuristic formula: CS = (0.40 * S_lang) + (0.30 * S_dep) + (0.30 * S_temp)
         overall_confidence = round(((s_lang * 0.40) + (s_dep * 0.30) + (s_temp * 0.30)) * 100, 2)
 
         return {
@@ -449,6 +636,7 @@ class ResumeAuditor:
             "dependency_verified": dep_verified,
             "anomalies": anomalies,
             "forensic_flags": forensic_flags,
+            "project_ownership": ownership_summary,
             "language_distribution": lang_scores,
             "matched_skills": matched_skills,
             "unverified_claims": unverified_claims
