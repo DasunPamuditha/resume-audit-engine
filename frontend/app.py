@@ -278,13 +278,37 @@ st.markdown("""
         color: #818CF8 !important;
     }
     .repo-lang {
-        font-size: 0.76rem;
+        font-size: 0.75rem;
         color: #D4D4D8;
         background: #18181B;
         border: 1px solid #27272A;
-        padding: 4px 10px;
+        padding: 3px 10px;
         border-radius: 6px;
         font-weight: 500;
+        display: inline-block;
+        margin-right: 6px;
+    }
+    .badge-solo {
+        font-size: 0.74rem;
+        color: #34D399;
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        padding: 3px 9px;
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', monospace;
+        display: inline-block;
+        margin-right: 6px;
+    }
+    .badge-group {
+        font-size: 0.74rem;
+        color: #FBBF24;
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        padding: 3px 9px;
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', monospace;
+        display: inline-block;
+        margin-right: 6px;
     }
 
     /* Primary Button */
@@ -338,12 +362,14 @@ def plot_confidence_gauge(score):
     return fig
 
 
-def build_humanized_summary(username, score, matched_skills, unverified_skills, repos_count, crit_count, warn_count):
+def build_humanized_summary(
+    username, score, matched_skills, unverified_skills, repos_count, crit_count, warn_count, solo_count, group_count
+):
     if not matched_skills and repos_count == 0 and not unverified_skills:
         return f"We could not find any technical skills on {username}'s resume or any public GitHub projects to check."
 
     parts = [
-        f"{username} achieved an overall skill match score of {score}% after evaluating {repos_count} public GitHub project(s)."
+        f"{username} achieved an overall skill match score of {score}% after evaluating {repos_count} public GitHub project(s) ({solo_count} individual project(s) and {group_count} group project(s))."
     ]
 
     if matched_skills:
@@ -364,11 +390,11 @@ def build_humanized_summary(username, score, matched_skills, unverified_skills, 
 
     if crit_count > 0 or warn_count > 0:
         parts.append(
-            f"The Git Provenance and Forensic Analyzer flagged {crit_count} critical anomaly(s) and {warn_count} warning(s) across commit timestamps, velocity cadences, and repository structures."
+            f"The Git Provenance and Coding Pattern Analyzer flagged {crit_count} critical anomaly(s) and {warn_count} warning(s) across commit timestamps, coding patterns, and repository structures."
         )
     else:
         parts.append(
-            "No temporal provenance anomalies, timestamp manipulations, or code security warnings were found across the evaluated commit history."
+            "No temporal provenance anomalies, coding pattern shifts, or code security warnings were found across the evaluated repositories."
         )
 
     return " ".join(parts)
@@ -412,6 +438,9 @@ def generate_pdf_report(data, summary_text, score):
 
     role_str = data.get("target_role") or "Software Developer"
     exec_time = data.get("execution_time_seconds", 0.0)
+    ownership = data.get("project_ownership_summary", {})
+    solo_c = ownership.get("individual_projects_count", 0)
+    group_c = ownership.get("group_projects_count", 0)
 
     story.append(Paragraph("VEDICODE — CANDIDATE SKILL & GITHUB CHECK REPORT", title_style))
     story.append(Paragraph(
@@ -423,8 +452,8 @@ def generate_pdf_report(data, summary_text, score):
     repos_count = data.get("repositories_evaluated", 0)
 
     summary_data = [
-        [Paragraph("<b>Overall Match Score</b>", body_style), Paragraph("<b>Check Result</b>", body_style), Paragraph("<b>Checked Projects</b>", body_style)],
-        [Paragraph(f"{score}%", body_style), Paragraph(f"{status_label}", body_style), Paragraph(f"{repos_count}", body_style)]
+        [Paragraph("<b>Overall Match Score</b>", body_style), Paragraph("<b>Check Result</b>", body_style), Paragraph("<b>Projects (Solo / Group)</b>", body_style)],
+        [Paragraph(f"{score}%", body_style), Paragraph(f"{status_label}", body_style), Paragraph(f"{repos_count} ({solo_c} Solo / {group_c} Group)", body_style)]
     ]
     t = Table(summary_data, colWidths=[180, 180, 180])
     t.setStyle(TableStyle([
@@ -451,13 +480,13 @@ def generate_pdf_report(data, summary_text, score):
     story.append(Paragraph(f"<b>Skills on Resume Only (Not Found in Public Code):</b> {unverified}", body_style))
     story.append(Spacer(1, 8))
 
-    story.append(Paragraph("Commit History & Code Authenticity Check", heading_style))
+    story.append(Paragraph("Commit History, Coding Patterns & Project Ownership Check", heading_style))
     forensic_summary = data.get("forensic_audit_summary", {})
     critical_errors = forensic_summary.get("critical_errors", [])
     warnings = forensic_summary.get("warnings", [])
 
     if not critical_errors and not warnings:
-        story.append(Paragraph("<i>No suspicious commit patterns or code issues were found.</i>", body_style))
+        story.append(Paragraph("<i>No suspicious commit patterns, coding style shifts, or code issues were found.</i>", body_style))
     else:
         for err in critical_errors:
             story.append(Paragraph(
@@ -515,7 +544,7 @@ with st.sidebar:
         if not github_username or not uploaded_file:
             st.warning("Please enter a GitHub username (or link) and upload a resume first.")
         else:
-            with st.spinner("Reading resume and checking GitHub projects & commit history..."):
+            with st.spinner("Checking resume, coding patterns, group/solo project ownership, and commit history..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                     form_data = {"target_role": target_role}
@@ -563,13 +592,13 @@ if not st.session_state.audit_data:
             </h3>
             <p style="color: #A1A1AA; font-size: 0.92rem; max-width: 580px; margin: 0 auto 26px auto; line-height: 1.6;">
                 Enter the candidate's GitHub username (or link) and upload their PDF resume on the left.
-                We will check their real code, project setup files, and commit history in a few seconds.
+                We will check their real code, coding style patterns, individual vs. group projects, and commit history in seconds.
             </p>
             <div style="display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
                 <span class="repo-lang">1. Reads Resume Skills</span>
-                <span class="repo-lang">2. Checks Project Setup Files</span>
-                <span class="repo-lang">3. Catches Unnatural Commits</span>
-                <span class="repo-lang">4. Shows Direct Code Links</span>
+                <span class="repo-lang">2. Checks Coding Style Patterns</span>
+                <span class="repo-lang">3. Verifies Solo vs. Group Projects</span>
+                <span class="repo-lang">4. Catches Unnatural Commits</span>
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -592,6 +621,9 @@ else:
     matched_skills = skill_data.get("matched_skills", [])
     unverified_skills = skill_data.get("unverified_claims", [])
     heuristic = data.get("heuristic_breakdown", {})
+    ownership = data.get("project_ownership_summary", {})
+    solo_count = ownership.get("individual_projects_count", 0)
+    group_count = ownership.get("group_projects_count", 0)
 
     raw_score = data.get("confidence_score", 0)
     score = 0 if (not matched_skills and (repos_count == 0 or raw_score == 0)) else raw_score
@@ -601,7 +633,7 @@ else:
 
     gmt_now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M GMT")
     human_summary = build_humanized_summary(
-        username, score, matched_skills, unverified_skills, repos_count, len(critical_errors), len(warnings)
+        username, score, matched_skills, unverified_skills, repos_count, len(critical_errors), len(warnings), solo_count, group_count
     )
 
     # --- CANDIDATE HEADER BAR ---
@@ -664,9 +696,11 @@ else:
     with col3:
         st.markdown(f"""
             <div class="surface-card">
-                <div class="metric-label">GitHub Projects & Warnings</div>
+                <div class="metric-label">GitHub Projects & Ownership</div>
                 <div class="metric-big">{repos_count} <span style="font-size: 0.9rem; color: #A1A1AA; font-weight: 500;">public projects</span></div>
                 <div class="metric-foot">
+                    Solo Projects: <span style="color:#34D399; font-weight:600;">{solo_count}</span> &nbsp;&bull;&nbsp;
+                    Group Projects: <span style="color:#FBBF24; font-weight:600;">{group_count}</span><br>
                     Proven Skills: <span style="color:#34D399; font-weight:600;">{len(matched_skills)}</span> &nbsp;&bull;&nbsp;
                     Issues / Warnings: <span style="color:#F87171; font-weight:600;">{total_flags}</span>
                 </div>
@@ -746,27 +780,27 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-    # --- SECTION: COMMIT HISTORY & CODE AUTHENTICITY CHECK (FORENSICS) ---
+    # --- SECTION: COMMIT HISTORY, CODING PATTERNS & CODE AUTHENTICITY CHECK ---
     st.markdown("""
         <div class="sec-header">
-            <p class="sec-title">Commit History & Code Authenticity Check</p>
-            <p class="sec-desc">Checks for unnatural commit dates, bulk uploads, browser drag-and-drop, someone else writing code, and code safety</p>
+            <p class="sec-title">Commit History, Coding Patterns & Authenticity Check</p>
+            <p class="sec-desc">Checks for unnatural commit dates, coding style shifts across files/lines, group project shares, and code safety</p>
         </div>
     """, unsafe_allow_html=True)
 
-    if len(critical_errors) == 0 and len(warnings) == 0:
+    if len(critical_errors) == 0 and len(warnings) == 0 and len(notices) == 0:
         st.markdown("""
             <div class="surface-card" style="padding: 16px 22px; border-left: 3px solid #10B981;">
                 <span style="color: #E4E4E7; font-size: 0.9rem; font-weight: 500;">
-                    ✅ Everything looks good! We found no suspicious commit dates, bulk code dumps, or security issues in their repositories.
+                    ✅ Everything looks good! We found no suspicious commit dates, coding style shifts, or security issues in their repositories.
                 </span>
             </div>
         """, unsafe_allow_html=True)
     else:
         f_tab1, f_tab2, f_tab3 = st.tabs([
             f"Serious Issues ({len(critical_errors)})",
-            f"Warnings to Review ({len(warnings)})",
-            f"Other Code Notes ({len(notices)})"
+            f"Warnings & Pattern Shifts ({len(warnings)})",
+            f"Project Ownership & Code Notes ({len(notices)})"
         ])
 
         with f_tab1:
@@ -785,21 +819,22 @@ else:
                     url_link = f" — [Open on GitHub]({warn['url']})" if warn.get("url") else ""
                     st.warning(f"**{warn.get('category', 'Warning')}** (`{ref_label}`): {warn.get('message', '')}{url_link}")
             else:
-                st.caption("No warnings found.")
+                st.caption("No warnings or coding pattern shifts found.")
 
         with f_tab3:
             if notices:
                 for note in notices:
                     ref_label = note.get("line", "Info")
-                    st.info(f"**{note.get('category', 'Note')}** (`{ref_label}`): {note.get('message', '')}")
+                    url_link = f" — [Open on GitHub]({note['url']})" if note.get("url") else ""
+                    st.info(f"**{note.get('category', 'Note')}** (`{ref_label}`): {note.get('message', '')}{url_link}")
             else:
                 st.caption("No extra notes.")
 
-    # --- SECTION: CHECKED GITHUB PROJECTS ---
+    # --- SECTION: CHECKED GITHUB PROJECTS (WITH SOLO VS GROUP VERIFICATION) ---
     st.markdown("""
         <div class="sec-header">
-            <p class="sec-title">Checked GitHub Projects</p>
-            <p class="sec-desc">Click any project name below to open it on GitHub</p>
+            <p class="sec-title">Checked GitHub Projects (Individual vs. Group Verification)</p>
+            <p class="sec-desc">Shows whether each repository is an Individual Project or a Group Project alongside the candidate's commit share</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -811,16 +846,25 @@ else:
             repo_url = repo.get('html_url', '#')
             stars = repo.get('stargazers_count', 0)
             lang = repo.get('language') or 'Multiple Languages'
-            is_fork = repo.get('fork', False)
-            fork_badge = " (Copied Fork)" if is_fork else ""
+            p_type = repo.get('project_type', 'Individual Project')
+            contribs_count = repo.get('contributors_count', 1)
+            share_pct = repo.get('candidate_contribution_pct', 100.0)
+
+            if p_type == "Group Project":
+                ownership_badge = f'<span class="badge-group">Group Project ({contribs_count} Contributors &bull; {share_pct}% Share)</span>'
+            elif p_type == "Copied Fork":
+                ownership_badge = '<span class="badge-group">Copied Fork</span>'
+            else:
+                ownership_badge = f'<span class="badge-solo">Individual Project (Solo &bull; {share_pct}% Authored)</span>'
 
             with repo_cols[idx % 2]:
                 st.markdown(f"""
                     <div class="repo-item">
                         <div>
-                            <a href="{repo_url}" target="_blank" class="repo-title">{repo_name}{fork_badge} &nearr;</a>
-                            <div style="margin-top: 6px;">
+                            <a href="{repo_url}" target="_blank" class="repo-title">{repo_name} &nearr;</a>
+                            <div style="margin-top: 8px;">
                                 <span class="repo-lang">{lang}</span>
+                                {ownership_badge}
                             </div>
                         </div>
                         <div style="text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: #A1A1AA;">
