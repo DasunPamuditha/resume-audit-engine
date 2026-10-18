@@ -10,7 +10,6 @@ import httpx
 import requests
 from typing import Dict, List, Any
 
-# Load GITHUB_TOKEN from environment if set
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
 
 HEADERS = {
@@ -38,8 +37,10 @@ MANIFEST_FILENAMES = {
     "docker-compose.yml"
 }
 
-# Persistent Disk + In-Memory Cache (survives Uvicorn --reload restarts)
-CACHE_FILE = os.path.join(os.path.dirname(__file__), ".vedicode_cache.json")
+CODE_EXTENSIONS = (".py", ".js", ".ts", ".jsx", ".tsx", ".java")
+
+# Persistent Disk Cache (v3 includes contributors & deep folder file trees)
+CACHE_FILE = os.path.join(os.path.dirname(__file__), ".vedicode_cache_v3.json")
 CACHE_TTL_SECONDS = 7200  # 2 hours
 
 
@@ -65,10 +66,6 @@ _DISK_CACHE = _load_disk_cache()
 
 
 def extract_github_username(raw_input: str) -> str:
-    """
-    Allows the user to enter either a GitHub username ('DasunPamuditha')
-    or a full GitHub URL ('https://github.com/DasunPamuditha/repo-name').
-    """
     cleaned = (raw_input or "").strip()
     if "github.com/" in cleaned.lower():
         match = re.search(r"github\.com/([a-zA-Z0-9\-_]+)", cleaned, re.IGNORECASE)
@@ -78,11 +75,6 @@ def extract_github_username(raw_input: str) -> str:
 
 
 async def _scrape_github_repos_fallback(username: str) -> List[Dict[str, Any]]:
-    """
-    Fallback when api.github.com returns 403 Rate Limit Exceeded.
-    Fetches public repositories directly from github.com/{username}?tab=repositories,
-    which is exempt from the 60/hr REST API limit.
-    """
     url = f"https://github.com/{username}?tab=repositories"
     repos_list: List[Dict[str, Any]] = []
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -92,7 +84,6 @@ async def _scrape_github_repos_fallback(username: str) -> List[Dict[str, Any]]:
                 return []
             page_html = resp.text
 
-            # Find all repository list items on the public profile page
             pattern = re.compile(
                 rf'<a[^>]+href="/{re.escape(username)}/([^/"?#]+)"[^>]*itemprop="name codeRepository"[^>]*>',
                 re.IGNORECASE
@@ -145,9 +136,6 @@ async def _scrape_github_repos_fallback(username: str) -> List[Dict[str, Any]]:
 async def _fetch_commits_atom_fallback(
     client: httpx.AsyncClient, username: str, repo_name: str, repo_html_url: str
 ) -> List[Dict[str, Any]]:
-    """
-    Fetches commit history via GitHub's public Atom XML feed when api.github.com is rate-limited.
-    """
     atom_urls = [
         f"https://github.com/{username}/{repo_name}/commits.atom",
         f"https://github.com/{username}/{repo_name}/commits/main.atom",
@@ -203,9 +191,6 @@ async def _fetch_commits_atom_fallback(
 
 
 async def fetch_github_user_data(username: str) -> dict:
-    """
-    Fetches GitHub user profile details asynchronously with persistent caching & web fallback.
-    """
     clean_user = extract_github_username(username)
     cache_key = clean_user.lower()
 
@@ -223,7 +208,6 @@ async def fetch_github_user_data(username: str) -> dict:
                 _save_disk_cache(_DISK_CACHE)
                 return data
             elif response.status_code == 403:
-                # Check if profile exists via standard web request
                 web_resp = await client.get(f"https://github.com/{clean_user}", headers=WEB_HEADERS, timeout=8.0)
                 if web_resp.status_code == 200:
                     data = {"login": clean_user, "status": "ok_web_fallback"}
@@ -237,10 +221,6 @@ async def fetch_github_user_data(username: str) -> dict:
 
 
 async def fetch_github_user_repos(username: str) -> list:
-    """
-    Fetches public repositories for a given GitHub user with persistent disk caching
-    and automatic HTML scraping fallback when GitHub REST API is rate-limited (403).
-    """
     clean_user = extract_github_username(username)
     cache_key = clean_user.lower()
 
@@ -285,7 +265,6 @@ async def fetch_github_user_repos(username: str) -> list:
         except Exception as e:
             print(f"[!] GitHub Repos API exception for {clean_user}: {e}")
 
-    # Automatic Fallback to Web Scraping when 403 Rate-Limited
     fallback_repos = await _scrape_github_repos_fallback(clean_user)
     if fallback_repos:
         _DISK_CACHE.setdefault("repos", {})[cache_key] = {"ts": time.time(), "data": fallback_repos}
@@ -297,12 +276,56 @@ async def fetch_github_user_repos(username: str) -> list:
     return []
 
 
+async def _scrape_repo_files_web_fallback(
+    client: httpx.AsyncClient, username: str, repo_name: str, default_branch: str
+) -> List[str]:
+    """
+    When 403 rate-limited, scrapes the repository's public HTML tree page to discover
+    code files (.py, .js, .ts, .java) in root or common subfolders.
+    """
+    discovered_paths: List[str] = []
+    try:
+        resp = await client.get(f"https://github.com/{username}/{repo_name}", headers=WEB_HEADERS, timeout=5.0)
+        if resp.status_code == 200:
+            blob_matches = re.findall(
+                rf'href="/{re.escape(username)}/{re.escape(repo_name)}/blob/[^/]+/([^"#?]+)"',
+                resp.text
+            )
+            for path in blob_matches:
+                if path.lower().endswith(CODE_EXTENSIONS) and path not in discovered_paths:
+                    discovered_paths.append(path)
+
+            # Check common subfolders if no root code files found
+            if not discovered_paths:
+                tree_matches = re.findall(
+                    rf'href="/{re.escape(username)}/{re.escape(repo_name)}/tree/([^/]+)/([^"#?]+)"',
+                    resp.text
+                )
+                for branch_name, folder in tree_matches[:2]:
+                    sub_resp = await client.get(
+                        f"https://github.com/{username}/{repo_name}/tree/{branch_name}/{folder}",
+                        headers=WEB_HEADERS,
+                        timeout=4.0
+                    )
+                    if sub_resp.status_code == 200:
+                        sub_blobs = re.findall(
+                            rf'href="/{re.escape(username)}/{re.escape(repo_name)}/blob/[^/]+/([^"#?]+)"',
+                            sub_resp.text
+                        )
+                        for spath in sub_blobs:
+                            if spath.lower().endswith(CODE_EXTENSIONS) and spath not in discovered_paths:
+                                discovered_paths.append(spath)
+    except Exception:
+        pass
+    return discovered_paths[:3]
+
+
 async def _fetch_single_repo_telemetry(
     client: httpx.AsyncClient, username: str, repo: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Concurrently fetches commits, language byte-counts, and dependency manifests.
-    Automatically falls back to Atom feeds and raw.githubusercontent.com if 403 rate-limited.
+    Concurrently fetches commits, contributors (for Group vs Individual verification),
+    language byte-counts, dependency manifests, and source code files (including subfolders).
     """
     repo_name = repo.get("name", "")
     repo_html_url = repo.get("html_url", f"https://github.com/{username}/{repo_name}")
@@ -311,15 +334,18 @@ async def _fetch_single_repo_telemetry(
 
     commits_url = f"{base_url}/commits?per_page=30"
     langs_url = f"{base_url}/languages"
-    contents_url = f"{base_url}/contents"
+    contributors_url = f"{base_url}/contributors?per_page=25"
+    tree_url = f"{base_url}/git/trees/{default_branch}?recursive=1"
 
-    commits_resp, langs_resp, contents_resp = await asyncio.gather(
+    commits_resp, langs_resp, contrib_resp, tree_resp = await asyncio.gather(
         client.get(commits_url, headers=HEADERS, timeout=6.0),
         client.get(langs_url, headers=HEADERS, timeout=5.0),
-        client.get(contents_url, headers=HEADERS, timeout=5.0),
+        client.get(contributors_url, headers=HEADERS, timeout=5.0),
+        client.get(tree_url, headers=HEADERS, timeout=6.0),
         return_exceptions=True
     )
 
+    # 1. Process Commits
     commits = []
     if not isinstance(commits_resp, Exception) and commits_resp.status_code == 200:
         data = commits_resp.json()
@@ -329,9 +355,9 @@ async def _fetch_single_repo_telemetry(
                 c["_repo_url"] = repo_html_url
             commits = data
     else:
-        # Fallback to Atom feed for commits
         commits = await _fetch_commits_atom_fallback(client, username, repo_name, repo_html_url)
 
+    # 2. Process Languages
     languages = {}
     if not isinstance(langs_resp, Exception) and langs_resp.status_code == 200:
         data = langs_resp.json()
@@ -340,49 +366,87 @@ async def _fetch_single_repo_telemetry(
     elif repo.get("language"):
         languages = {repo["language"]: max(int(repo.get("size", 100)) * 1024, 10240)}
 
+    # 3. Process Contributors (Feature 2: Group vs Individual Project Verification)
+    contributors_list = []
+    if not isinstance(contrib_resp, Exception) and contrib_resp.status_code == 200:
+        c_data = contrib_resp.json()
+        if isinstance(c_data, list):
+            for c_item in c_data:
+                if isinstance(c_item, dict):
+                    login_name = str(c_item.get("login") or "")
+                    if login_name and not login_name.endswith("[bot]"):
+                        contributors_list.append({
+                            "login": login_name,
+                            "contributions": int(c_item.get("contributions", 1))
+                        })
+
+    # Fallback contributor calculation from commit authors if contributors endpoint was rate-limited
+    if not contributors_list and commits:
+        author_counts: Dict[str, int] = {}
+        for c in commits:
+            gh_author = c.get("author")
+            login = (gh_author.get("login") if isinstance(gh_author, dict) else "") or ""
+            if not login:
+                commit_author = (c.get("commit") or {}).get("author") or {}
+                login = commit_author.get("name") or commit_author.get("email") or "Contributor"
+            if login and not str(login).endswith("[bot]"):
+                author_counts[login] = author_counts.get(login, 0) + 1
+        contributors_list = [{"login": k, "contributions": v} for k, v in author_counts.items()]
+
+    # 4. Process Repository Files & Subdirectories (Feature 1: Deep Code Pattern Inspection)
     manifests_found = []
     manifest_links = {}
     manifest_contents = {}
     sample_code_files = []
+    files_to_download = []
 
-    if not isinstance(contents_resp, Exception) and contents_resp.status_code == 200:
-        items = contents_resp.json()
-        source_files_to_fetch = []
-        if isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                fname = (item.get("name") or "").strip()
-                fname_lower = fname.lower()
-                download_url = item.get("download_url")
-                html_file_url = item.get("html_url") or f"{repo_html_url}/blob/{default_branch}/{fname}"
+    if not isinstance(tree_resp, Exception) and tree_resp.status_code == 200:
+        tree_data = tree_resp.json()
+        tree_items = tree_data.get("tree", []) if isinstance(tree_data, dict) else []
+        for item in tree_items:
+            if not isinstance(item, dict) or item.get("type") != "blob":
+                continue
+            path = (item.get("path") or "").strip()
+            fname = path.split("/")[-1]
+            fname_lower = fname.lower()
+            size_bytes = int(item.get("size") or 0)
 
-                if fname_lower in MANIFEST_FILENAMES:
-                    manifest_key = f"{repo_name}/{fname}"
-                    manifests_found.append(manifest_key)
-                    manifest_links[manifest_key] = html_file_url
-                    if download_url:
-                        source_files_to_fetch.append(("manifest", fname, repo_name, download_url, html_file_url))
-                elif fname_lower.endswith((".py", ".js", ".ts", ".java")) and len(source_files_to_fetch) < 2:
-                    if download_url and item.get("size", 0) < 120000:
-                        source_files_to_fetch.append(("code", fname, repo_name, download_url, html_file_url))
+            # Skip node_modules, venv, build, dist, or minified files
+            if any(skip in path.lower() for skip in ["node_modules/", "venv/", ".venv/", "dist/", "build/", ".min."]):
+                continue
 
-        if source_files_to_fetch:
-            file_tasks = [client.get(url, headers=HEADERS, timeout=4.0) for _, _, _, url, _ in source_files_to_fetch[:2]]
-            file_resps = await asyncio.gather(*file_tasks, return_exceptions=True)
-            for (ftype, fname, rname, _, html_url), fresp in zip(source_files_to_fetch[:2], file_resps):
+            raw_url = f"https://raw.githubusercontent.com/{username}/{repo_name}/{default_branch}/{path}"
+            html_file_url = f"{repo_html_url}/blob/{default_branch}/{path}"
+
+            if fname_lower in MANIFEST_FILENAMES:
+                manifest_key = f"{repo_name}/{path}"
+                manifests_found.append(manifest_key)
+                manifest_links[manifest_key] = html_file_url
+                files_to_download.append(("manifest", path, repo_name, raw_url, html_file_url))
+            elif fname_lower.endswith(CODE_EXTENSIONS) and 30 < size_bytes < 120000:
+                files_to_download.append(("code", path, repo_name, raw_url, html_file_url))
+
+        # Prioritize downloading manifests + up to 3 code files per repository
+        manifest_downloads = [f for f in files_to_download if f[0] == "manifest"][:2]
+        code_downloads = [f for f in files_to_download if f[0] == "code"][:3]
+        selected_downloads = manifest_downloads + code_downloads
+
+        if selected_downloads:
+            dl_tasks = [client.get(url, timeout=4.5) for _, _, _, url, _ in selected_downloads]
+            dl_resps = await asyncio.gather(*dl_tasks, return_exceptions=True)
+            for (ftype, path, rname, _, html_url), fresp in zip(selected_downloads, dl_resps):
                 if not isinstance(fresp, Exception) and fresp.status_code == 200:
                     if ftype == "manifest":
-                        manifest_contents[f"{rname}/{fname}"] = fresp.text
+                        manifest_contents[f"{rname}/{path}"] = fresp.text
                     else:
                         sample_code_files.append({
                             "repo": rname,
-                            "filename": fname,
+                            "filename": path,
                             "html_url": html_url,
                             "content": fresp.text
                         })
     else:
-        # Fallback: Probe raw.githubusercontent.com directly (exempt from 60/hr API rate limit)
+        # Fallback when API is rate-limited: probe raw manifests and scrape web tree for code files
         probe_files = ["package.json", "requirements.txt", "pom.xml"]
         raw_tasks = [
             client.get(f"https://raw.githubusercontent.com/{username}/{repo_name}/HEAD/{pf}", timeout=4.0)
@@ -396,10 +460,27 @@ async def _fetch_single_repo_telemetry(
                 manifest_links[m_key] = f"{repo_html_url}/blob/HEAD/{pf}"
                 manifest_contents[m_key] = r_resp.text
 
+        discovered_code_paths = await _scrape_repo_files_web_fallback(client, username, repo_name, default_branch)
+        if discovered_code_paths:
+            code_tasks = [
+                client.get(f"https://raw.githubusercontent.com/{username}/{repo_name}/HEAD/{cp}", timeout=4.0)
+                for cp in discovered_code_paths
+            ]
+            code_resps = await asyncio.gather(*code_tasks, return_exceptions=True)
+            for cp, c_resp in zip(discovered_code_paths, code_resps):
+                if not isinstance(c_resp, Exception) and c_resp.status_code == 200:
+                    sample_code_files.append({
+                        "repo": repo_name,
+                        "filename": cp,
+                        "html_url": f"{repo_html_url}/blob/HEAD/{cp}",
+                        "content": c_resp.text
+                    })
+
     return {
         "repo_name": repo_name,
         "repo_meta": repo,
         "commits": commits,
+        "contributors": contributors_list,
         "languages": languages,
         "manifests_found": manifests_found,
         "manifest_links": manifest_links,
@@ -410,8 +491,8 @@ async def _fetch_single_repo_telemetry(
 
 async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Aggregates deep telemetry across the candidate's top repositories concurrently
-    with persistent disk caching and automatic web/atom/raw fallback.
+    Aggregates deep telemetry across the candidate's repositories concurrently,
+    including contributor breakdowns and source code files for stylometric pattern checks.
     """
     clean_user = extract_github_username(username)
     cache_key = clean_user.lower()
@@ -420,6 +501,7 @@ async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]
         return {
             "commits": [],
             "repo_commits_map": {},
+            "repo_contributors_map": {},
             "repo_languages_map": {},
             "languages": {},
             "dependencies": [],
@@ -436,7 +518,7 @@ async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]
             return dict(cached_bundle)
 
     non_fork_repos = [r for r in repos if not r.get("fork")]
-    target_repos = (non_fork_repos if non_fork_repos else repos)[:5]
+    target_repos = (non_fork_repos if non_fork_repos else repos)[:6]
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         tasks = [_fetch_single_repo_telemetry(client, clean_user, r) for r in target_repos]
@@ -444,6 +526,7 @@ async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]
 
     all_commits = []
     repo_commits_map = {}
+    repo_contributors_map = {}
     repo_languages_map = {}
     aggregate_languages: Dict[str, int] = {}
     all_dependencies = []
@@ -458,6 +541,7 @@ async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]
         r_commits = res.get("commits", [])
         all_commits.extend(r_commits)
         repo_commits_map[rname] = r_commits
+        repo_contributors_map[rname] = res.get("contributors", [])
         repo_languages_map[rname] = res.get("languages", {})
 
         for lang, byte_count in res.get("languages", {}).items():
@@ -476,6 +560,7 @@ async def fetch_repo_telemetry_bundle(username: str, repos: List[Dict[str, Any]]
     bundle = {
         "commits": all_commits,
         "repo_commits_map": repo_commits_map,
+        "repo_contributors_map": repo_contributors_map,
         "repo_languages_map": repo_languages_map,
         "languages": aggregate_languages,
         "dependencies": all_dependencies,
