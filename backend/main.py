@@ -32,8 +32,8 @@ except ImportError:
 
 app = FastAPI(
     title="VediCode — Resume & GitHub Verification Engine",
-    version="2.6.0",
-    description="Automated Candidate Skill Verification, Commit History Forensics, and Evidence-Linking System."
+    version="2.7.0",
+    description="Automated Candidate Skill Verification, Commit History Forensics, Coding Pattern Stylometry, and Group/Solo Project Auditor."
 )
 
 app.add_middleware(
@@ -61,7 +61,7 @@ async def audit_candidate_endpoint(
 ):
     """
     Complete End-to-End Audit Pipeline with PDF Extraction, Live GitHub Commit Provenance
-    Forensics, Dependency Manifest Auditing, Direct Evidence Linking, and Rate-Limit Fallback.
+    Forensics, Coding Pattern Stylometry, Individual vs. Group Project Verification, and Skill Matching.
     """
     start_time = time.perf_counter()
     clean_username = extract_github_username(username)
@@ -91,19 +91,20 @@ async def audit_candidate_endpoint(
         resume_text_snippet = sanitize_pii_text(resume_text_snippet)
         print(f"[*] Resume text extracted ({len(resume_text_snippet)} chars). Fetching GitHub telemetry...")
 
-        # 2. Fetch GitHub User Profile and Public Repositories (uses Web Fallback if 403 rate-limited)
+        # 2. Fetch GitHub User Profile and Public Repositories
         github_profile = await fetch_github_user_data(clean_username)
         repos = await fetch_github_user_repos(clean_username)
         evaluated_repo_count = len(repos)
         print(f"[*] Fetched {evaluated_repo_count} public repositories for {clean_username}.")
 
-        # 3. Fetch Deep Repository Telemetry (Commits, Timestamps, Languages, Manifests, Code Files)
+        # 3. Fetch Deep Repository Telemetry (Commits, Contributors, Languages, Manifests, Code Files)
         telemetry_bundle = await fetch_repo_telemetry_bundle(clean_username, repos)
         telemetry_bundle["repos_list"] = repos
 
-        # 4. Run Static Code Analysis (AST & Cross-Language) on fetched repository source files
+        # 4. Run Deep Coding Pattern & Line-by-Line Stylometry Analysis (Feature 1)
         all_imported_modules = []
         static_forensic_flags = []
+        style_signatures = []
         sample_files = telemetry_bundle.get("sample_code_files", [])
 
         for code_file in sample_files:
@@ -113,16 +114,22 @@ async def audit_candidate_endpoint(
                 ast_res = analyze_python_code_structure(content, filename=fname)
                 all_imported_modules.extend(ast_res.get("imported_modules", []))
                 static_forensic_flags.extend(ast_res.get("forensic_flags", []))
-            elif fname.lower().endswith((".js", ".ts", ".java")):
+                if ast_res.get("style_signature"):
+                    style_signatures.append(ast_res["style_signature"])
+            elif fname.lower().endswith((".js", ".ts", ".jsx", ".tsx", ".java")):
                 ext_lang = "java" if fname.lower().endswith(".java") else "javascript"
                 cl_res = analyze_cross_language_code(content, ext_lang, filename=fname)
                 static_forensic_flags.extend(cl_res.get("structured_flags", []))
+                if cl_res.get("style_signature"):
+                    style_signatures.append(cl_res["style_signature"])
+
+        telemetry_bundle["style_signatures"] = style_signatures
 
         manifest_text_blob = " ".join(telemetry_bundle.get("manifest_contents", {}).values())
         lang_keys_blob = " ".join(telemetry_bundle.get("languages", {}).keys())
         extra_evidence = f"{manifest_text_blob} {lang_keys_blob}"
 
-        # 5. Perform Strict Skill-Gap Analysis & Direct Evidence Linking
+        # 5. Perform Strict Skill-Gap Analysis
         skill_gap_data = analyze_skill_gaps(
             resume_text=resume_text_snippet,
             repositories=repos,
@@ -135,13 +142,14 @@ async def audit_candidate_endpoint(
         unverified_claims = skill_gap_data.get("unverified_claims", [])
         print(f"[*] Skill intersection complete. Matched: {matched_skills}, Unverified: {unverified_claims}")
 
-        # 6. Execute ResumeAuditor for Temporal Provenance Forensics & Heuristic Confidence Scoring
+        # 6. Execute ResumeAuditor (Temporal Provenance + Group/Solo Verification + Cross-Repo Patterns)
         auditor = ResumeAuditor(
             extracted_skills=claimed_skills,
             repo_telemetry=telemetry_bundle,
             username=clean_username
         )
         audit_results = auditor.audit()
+        project_ownership = audit_results.get("project_ownership", {})
 
         all_forensic_flags = audit_results.get("forensic_flags", []) + static_forensic_flags
 
@@ -172,7 +180,7 @@ async def audit_candidate_endpoint(
 
         status = "verified" if (confidence_score >= 70.0 and len(critical_errors) < 2) else "unverified"
 
-        # 8. Generate Explainable AI (XAI) Rationale in Simple English
+        # 8. Generate Explainable AI (XAI) Rationale
         xai_rationale = generate_xai_rationale(
             candidate_name=clean_username,
             confidence_score=confidence_score,
@@ -196,6 +204,11 @@ async def audit_candidate_endpoint(
                 "s_temp": audit_results.get("temporal_score", 0.0),
                 "dependency_verified": audit_results.get("dependency_verified", False),
                 "manifests_detected": telemetry_bundle.get("dependencies", [])
+            },
+            "project_ownership_summary": {
+                "individual_projects_count": project_ownership.get("individual_projects_count", 0),
+                "group_projects_count": project_ownership.get("group_projects_count", 0),
+                "files_inspected_for_patterns": len(sample_files)
             },
             "xai_rationale": xai_rationale,
             "skill_gap_analysis": skill_gap_data,
